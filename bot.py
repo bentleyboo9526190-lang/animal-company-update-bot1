@@ -4,31 +4,31 @@ import threading
 from datetime import datetime, timezone
 
 from flask import Flask
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# =========================
-# SETTINGS
-# =========================
-
 TOKEN = os.getenv("DISCORD_TOKEN")
+UPDATE_CHANNEL_ID = int(os.getenv("UPDATE_CHANNEL_ID", "0"))
+UPDATE_ROLE_ID = int(os.getenv("UPDATE_ROLE_ID", "0"))
 
-UPDATE_CHANNEL_ID = int(
-    os.getenv("UPDATE_CHANNEL_ID", "0")
+# Animal Company public Quest metadata
+META_METADATA_URL = (
+    "https://raw.githubusercontent.com/threethan/MetaMetadata/main/"
+    "data/common/woosterGames.animalCompany.json"
 )
 
-UPDATE_ROLE_ID = int(
-    os.getenv("UPDATE_ROLE_ID", "0")
-)
+META_STORE_URL = "https://www.meta.com/experiences/quest/7190422614401072/"
 
 DATA_FILE = "update_data.json"
+CHECK_MINUTES = 2
 
 
 # =========================
-# WEB SERVER FOR RENDER
+# RENDER WEB SERVER
 # =========================
 
 app = Flask(__name__)
@@ -41,13 +41,9 @@ def home():
 
 def run_web_server():
     port = int(os.getenv("PORT", "10000"))
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    app.run(host="0.0.0.0", port=port)
 
 
-# Start web server in background
 web_thread = threading.Thread(
     target=run_web_server,
     daemon=True
@@ -70,43 +66,56 @@ bot = commands.Bot(
 
 
 # =========================
-# SAVE / LOAD UPDATE DATA
+# SAVED UPDATE DATA
 # =========================
 
+def default_data():
+    return {
+        "version": None,
+        "version_code": None,
+        "release_time": None
+    }
+
+
 def load_data():
+
     if not os.path.exists(DATA_FILE):
-        return {
-            "version": None,
-            "version_code": None,
-            "release_time": None
-        }
+        return default_data()
 
     try:
-        with open(
-            DATA_FILE,
-            "r",
-            encoding="utf-8"
-        ) as file:
-            return json.load(file)
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
 
-    except Exception:
         return {
-            "version": None,
-            "version_code": None,
-            "release_time": None
+            "version": data.get("version"),
+            "version_code": data.get("version_code"),
+            "release_time": data.get("release_time")
         }
+
+    except Exception as error:
+
+        print(
+            f"WARNING: Could not read {DATA_FILE}: {error}"
+        )
+
+        return default_data()
 
 
 def save_data(data):
-    with open(
-        DATA_FILE,
-        "w",
-        encoding="utf-8"
-    ) as file:
-        json.dump(
-            data,
-            file,
-            indent=4
+
+    try:
+
+        with open(DATA_FILE, "w", encoding="utf-8") as file:
+            json.dump(
+                data,
+                file,
+                indent=4
+            )
+
+    except Exception as error:
+
+        print(
+            f"ERROR: Could not save {DATA_FILE}: {error}"
         )
 
 
@@ -118,11 +127,14 @@ def make_update_embed(
     previous_version,
     new_version,
     version_code,
-    release_time
+    release_time,
+    image_url=None
 ):
+
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
-        color=discord.Color.green()
+        color=discord.Color.green(),
+        url=META_STORE_URL
     )
 
     embed.add_field(
@@ -155,7 +167,91 @@ def make_update_embed(
         inline=False
     )
 
+    embed.add_field(
+        name="🛒 Meta Store",
+        value=f"[Open Animal Company page]({META_STORE_URL})",
+        inline=False
+    )
+
+    if image_url:
+        embed.set_image(url=image_url)
+
     return embed
+
+
+# =========================
+# GET ANIMAL COMPANY DATA
+# =========================
+
+async def fetch_animal_company():
+
+    timeout = aiohttp.ClientTimeout(
+        total=20
+    )
+
+    headers = {
+        "User-Agent": "AnimalCompanyUpdateBot/1.0",
+        "Accept": "application/json"
+    }
+
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        headers=headers
+    ) as session:
+
+        async with session.get(
+            META_METADATA_URL
+        ) as response:
+
+            response.raise_for_status()
+
+            data = await response.json(
+                content_type=None
+            )
+
+    version = str(
+        data.get("version", "")
+    ).strip()
+
+    version_code = data.get(
+        "versioncode"
+    )
+
+    if not version:
+
+        raise ValueError(
+            "Animal Company version was missing."
+        )
+
+    if version_code is None:
+
+        raise ValueError(
+            "Animal Company version code was missing."
+        )
+
+    try:
+
+        version_code = int(
+            version_code
+        )
+
+    except (TypeError, ValueError):
+
+        version_code = str(
+            version_code
+        )
+
+    image_url = (
+        data.get("landscape")
+        or data.get("hero")
+        or data.get("portrait")
+    )
+
+    return {
+        "version": version,
+        "version_code": version_code,
+        "image_url": image_url
+    }
 
 
 # =========================
@@ -166,21 +262,36 @@ async def send_update(
     previous_version,
     new_version,
     version_code,
-    release_time
+    release_time,
+    image_url
 ):
+
     channel = bot.get_channel(
         UPDATE_CHANNEL_ID
     )
 
     if channel is None:
-        print("ERROR: Update channel not found.")
-        return
+
+        try:
+
+            channel = await bot.fetch_channel(
+                UPDATE_CHANNEL_ID
+            )
+
+        except Exception as error:
+
+            print(
+                f"ERROR: Could not find update channel: {error}"
+            )
+
+            return
 
     embed = make_update_embed(
-        previous_version,
-        new_version,
-        version_code,
-        release_time
+        previous_version=previous_version,
+        new_version=new_version,
+        version_code=version_code,
+        release_time=release_time,
+        image_url=image_url
     )
 
     role_mention = (
@@ -197,39 +308,128 @@ async def send_update(
 
 
 # =========================
-# UPDATE CHECKER
+# CHECK FOR UPDATES
 # =========================
 
-@tasks.loop(minutes=2)
+@tasks.loop(minutes=CHECK_MINUTES)
 async def check_for_updates():
 
-    print("Checking for Animal Company updates...")
+    print(
+        "Checking for Animal Company updates..."
+    )
 
-    # =====================================
-    # ACTUAL ANIMAL COMPANY CHECKER
-    # WILL GO HERE NEXT
-    # =====================================
+    try:
 
-    # We are NOT hard-coding versions here.
-    #
-    # The finished checker will automatically
-    # get:
-    #
-    # Previous Version
-    # New Version
-    # Version Code
-    # Release Time
-    #
-    # and compare it with the last update.
+        latest = await fetch_animal_company()
 
+    except Exception as error:
+
+        print(
+            f"ERROR: Animal Company check failed: {error}"
+        )
+
+        return
+
+    latest_version = latest["version"]
+    latest_code = latest["version_code"]
+    image_url = latest["image_url"]
+
+    data = load_data()
+
+    previous_version = data.get(
+        "version"
+    )
+
+    previous_code = data.get(
+        "version_code"
+    )
+
+    print(
+        f"Source: version={latest_version}, "
+        f"version_code={latest_code}"
+    )
+
+    # First startup.
+    # Save the current version without sending an alert.
+    if (
+        previous_version is None
+        or previous_code is None
+    ):
+
+        data["version"] = latest_version
+        data["version_code"] = latest_code
+        data["release_time"] = None
+
+        save_data(data)
+
+        print(
+            "Initialized current Animal Company version: "
+            f"{latest_version} ({latest_code})"
+        )
+
+        return
+
+    # No change.
+    if (
+        str(previous_version)
+        == str(latest_version)
+        and
+        str(previous_code)
+        == str(latest_code)
+    ):
+
+        print(
+            "No new Animal Company update."
+        )
+
+        return
+
+    # =========================
+    # NEW UPDATE FOUND
+    # =========================
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    detected_time = now.strftime(
+        "%B %d, %Y at %I:%M %p UTC"
+    )
+
+    print(
+        "NEW UPDATE DETECTED: "
+        f"{previous_version} -> {latest_version} "
+        f"(code {latest_code})"
+    )
+
+    await send_update(
+        previous_version=previous_version,
+        new_version=latest_version,
+        version_code=latest_code,
+        release_time=detected_time,
+        image_url=image_url
+    )
+
+    # Save new version
+    data["version"] = latest_version
+    data["version_code"] = latest_code
+    data["release_time"] = detected_time
+
+    save_data(data)
+
+
+# =========================
+# WAIT FOR DISCORD
+# =========================
 
 @check_for_updates.before_loop
 async def before_update_check():
+
     await bot.wait_until_ready()
 
 
 # =========================
-# BOT STARTUP
+# BOT STARTED
 # =========================
 
 @bot.event
@@ -240,16 +440,23 @@ async def on_ready():
     )
 
     print(
-        f"Update Channel ID: "
-        f"{UPDATE_CHANNEL_ID}"
+        f"Update Channel ID: {UPDATE_CHANNEL_ID}"
     )
 
     print(
-        f"Update Role ID: "
-        f"{UPDATE_ROLE_ID}"
+        f"Update Role ID: {UPDATE_ROLE_ID}"
+    )
+
+    print(
+        f"Checking every {CHECK_MINUTES} minutes."
+    )
+
+    print(
+        f"Metadata source: {META_METADATA_URL}"
     )
 
     if not check_for_updates.is_running():
+
         check_for_updates.start()
 
 
@@ -296,8 +503,10 @@ async def testupdate(ctx):
 # =========================
 
 if not TOKEN:
+
     raise RuntimeError(
         "DISCORD_TOKEN is missing!"
     )
+
 
 bot.run(TOKEN)
