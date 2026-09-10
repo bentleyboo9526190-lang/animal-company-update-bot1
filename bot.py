@@ -11,39 +11,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# =========================
+# =========================================================
 # SETTINGS
-# =========================
+# =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-UPDATE_CHANNEL_ID = int(
-    os.getenv("UPDATE_CHANNEL_ID", "0")
-)
+# Your NEW update channel
+UPDATE_CHANNEL_ID = 1547679561960132695
 
-UPDATE_ROLE_ID = int(
-    os.getenv("UPDATE_ROLE_ID", "0")
-)
+# Your @AC UPDATES role
+UPDATE_ROLE_ID = 1547729517395714178
 
+# Check every 2 minutes
 CHECK_MINUTES = 2
 
+# Saved update information
 DATA_FILE = "update_data.json"
 
+# Animal Company MetaMetadata source
 META_METADATA_URL = (
     "https://raw.githubusercontent.com/"
     "threethan/MetaMetadata/main/"
     "data/common/woosterGames.animalCompany.json"
 )
 
+# Animal Company Meta Quest page
 META_STORE_URL = (
     "https://www.meta.com/experiences/"
     "quest/7190422614401072/"
 )
 
 
-# =========================
+# =========================================================
 # FLASK / RENDER WEB SERVER
-# =========================
+# =========================================================
 
 app = Flask(__name__)
 
@@ -73,9 +75,9 @@ web_thread = threading.Thread(
 web_thread.start()
 
 
-# =========================
+# =========================================================
 # DISCORD BOT
-# =========================
+# =========================================================
 
 intents = discord.Intents.default()
 
@@ -87,9 +89,9 @@ bot = commands.Bot(
 )
 
 
-# =========================
-# DATA STORAGE
-# =========================
+# =========================================================
+# SAVED DATA
+# =========================================================
 
 def default_data():
 
@@ -156,40 +158,77 @@ def save_data(data):
         )
 
 
-# =========================
-# DISCORD EMBED
-# =========================
+# =========================================================
+# CREATE EMBED
+# =========================================================
 
 def make_update_embed(
     previous_version,
     new_version,
     version_code,
     release_time,
-    image_url=None
+    image_url=None,
+    logo_url=None
 ):
 
+    # The red color matches the Animal Company style
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
-        color=discord.Color.green()
+        color=discord.Color.red()
     )
+
+    # =====================================================
+    # TOP: ANIMAL COMPANY
+    # =====================================================
+
+    if logo_url:
+
+        embed.set_author(
+            name="Animal Company",
+            icon_url=logo_url
+        )
+
+    else:
+
+        embed.set_author(
+            name="Animal Company"
+        )
+
+    # =====================================================
+    # TOP RIGHT THUMBNAIL
+    # =====================================================
+
+    if image_url:
+
+        embed.set_thumbnail(
+            url=image_url
+        )
+
+    # =====================================================
+    # VERSION ROW
+    # =====================================================
 
     embed.add_field(
         name="⬅️ Previous Version",
         value=f"`{previous_version}`",
-        inline=False
+        inline=True
     )
 
     embed.add_field(
         name="📦 New Version",
         value=f"`{new_version}`",
-        inline=False
+        inline=True
     )
 
     embed.add_field(
         name="🔢 Version Code",
         value=f"`{version_code}`",
-        inline=False
+        inline=True
     )
+
+    # =====================================================
+    # RELEASED
+    # =====================================================
 
     embed.add_field(
         name="🕐 Released",
@@ -197,20 +236,28 @@ def make_update_embed(
         inline=False
     )
 
+    # =====================================================
+    # CHANNEL + META STORE ROW
+    # =====================================================
+
     embed.add_field(
         name="📡 Channel",
         value="`LIVE`",
-        inline=False
+        inline=True
     )
 
     embed.add_field(
-        name="🛒 Meta Store",
+        name="🔗 Meta Store",
         value=(
             f"[Open Animal Company page]"
             f"({META_STORE_URL})"
         ),
-        inline=False
+        inline=True
     )
+
+    # =====================================================
+    # LARGE IMAGE
+    # =====================================================
 
     if image_url:
 
@@ -218,12 +265,15 @@ def make_update_embed(
             url=image_url
         )
 
+    # NO FOOTER
+    # Intentionally left blank to match your screenshot.
+
     return embed
 
 
-# =========================
-# GET ANIMAL COMPANY DATA
-# =========================
+# =========================================================
+# GET ANIMAL COMPANY INFORMATION
+# =========================================================
 
 async def fetch_animal_company():
 
@@ -232,10 +282,8 @@ async def fetch_animal_company():
     )
 
     headers = {
-        "User-Agent":
-            "AnimalCompanyUpdateBot/1.0",
-        "Accept":
-            "application/json"
+        "User-Agent": "AnimalCompanyUpdateBot/1.0",
+        "Accept": "application/json"
     }
 
     async with aiohttp.ClientSession(
@@ -253,13 +301,13 @@ async def fetch_animal_company():
                 content_type=None
             )
 
+    # =====================================================
+    # VERSION
+    # =====================================================
+
     version = str(
         data.get("version", "")
     ).strip()
-
-    version_code = data.get(
-        "versioncode"
-    )
 
     if not version:
 
@@ -267,41 +315,67 @@ async def fetch_animal_company():
             "Version was missing from the metadata."
         )
 
+    # =====================================================
+    # VERSION CODE
+    # =====================================================
+
+    version_code = data.get(
+        "versioncode"
+    )
+
     if version_code is None:
 
         raise ValueError(
             "Version code was missing from the metadata."
         )
 
+    # =====================================================
+    # LARGE UPDATE IMAGE
+    # =====================================================
+
     image_url = (
         data.get("landscape")
         or data.get("hero")
         or data.get("portrait")
+        or data.get("square")
+    )
+
+    # =====================================================
+    # ANIMAL COMPANY LOGO
+    # =====================================================
+
+    logo_url = (
+        data.get("logo")
+        or data.get("icon")
     )
 
     return {
         "version": version,
         "version_code": version_code,
-        "image_url": image_url
+        "image_url": image_url,
+        "logo_url": logo_url
     }
 
 
-# =========================
-# SEND UPDATE
-# =========================
+# =========================================================
+# SEND UPDATE MESSAGE
+# =========================================================
 
 async def send_update(
     previous_version,
     new_version,
     version_code,
     release_time,
-    image_url
+    image_url,
+    logo_url
 ):
 
+    # Try cached channel first
     channel = bot.get_channel(
         UPDATE_CHANNEL_ID
     )
 
+    # If not cached, fetch it
     if channel is None:
 
         print(
@@ -319,23 +393,36 @@ async def send_update(
         except Exception as error:
 
             print(
-                f"ERROR: Could not find channel: {error}",
+                f"ERROR: Could not find update channel: {error}",
                 flush=True
             )
 
-            return
+            return False
+
+    # =====================================================
+    # CREATE EMBED
+    # =====================================================
 
     embed = make_update_embed(
         previous_version=previous_version,
         new_version=new_version,
         version_code=version_code,
         release_time=release_time,
-        image_url=image_url
+        image_url=image_url,
+        logo_url=logo_url
     )
+
+    # =====================================================
+    # ROLE MENTION
+    # =====================================================
 
     role_mention = (
         f"<@&{UPDATE_ROLE_ID}>"
     )
+
+    # =====================================================
+    # SEND
+    # =====================================================
 
     await channel.send(
         content=role_mention,
@@ -350,10 +437,12 @@ async def send_update(
         flush=True
     )
 
+    return True
 
-# =========================
-# UPDATE CHECKER
-# =========================
+
+# =========================================================
+# AUTOMATIC UPDATE CHECKER
+# =========================================================
 
 @tasks.loop(minutes=CHECK_MINUTES)
 async def check_for_updates():
@@ -362,6 +451,10 @@ async def check_for_updates():
         "Checking for Animal Company updates...",
         flush=True
     )
+
+    # =====================================================
+    # GET CURRENT VERSION
+    # =====================================================
 
     try:
 
@@ -382,11 +475,17 @@ async def check_for_updates():
 
     image_url = latest["image_url"]
 
+    logo_url = latest["logo_url"]
+
     print(
         f"Source: version={latest_version}, "
         f"version_code={latest_code}",
         flush=True
     )
+
+    # =====================================================
+    # LOAD PREVIOUS VERSION
+    # =====================================================
 
     data = load_data()
 
@@ -398,9 +497,9 @@ async def check_for_updates():
         "version_code"
     )
 
-    # =========================
+    # =====================================================
     # FIRST STARTUP
-    # =========================
+    # =====================================================
 
     if (
         previous_version is None
@@ -435,9 +534,9 @@ async def check_for_updates():
 
         return
 
-    # =========================
+    # =====================================================
     # NO UPDATE
-    # =========================
+    # =====================================================
 
     if (
         str(previous_version)
@@ -454,16 +553,16 @@ async def check_for_updates():
 
         return
 
-    # =========================
-    # NEW UPDATE
-    # =========================
+    # =====================================================
+    # NEW UPDATE FOUND
+    # =====================================================
 
     now = datetime.now(
         timezone.utc
     )
 
     release_time = now.strftime(
-        "%B %d, %Y at %I:%M %p UTC"
+        "%A, %B %d, %Y at %I:%M %p UTC"
     )
 
     print(
@@ -496,14 +595,19 @@ async def check_for_updates():
         flush=True
     )
 
+    # =====================================================
+    # SEND DISCORD MESSAGE
+    # =====================================================
+
     try:
 
-        await send_update(
+        sent = await send_update(
             previous_version=previous_version,
             new_version=latest_version,
             version_code=latest_code,
             release_time=release_time,
-            image_url=image_url
+            image_url=image_url,
+            logo_url=logo_url
         )
 
     except Exception as error:
@@ -515,25 +619,29 @@ async def check_for_updates():
 
         return
 
-    # Save only after the Discord message succeeds.
+    # =====================================================
+    # ONLY SAVE AFTER MESSAGE SENDS
+    # =====================================================
 
-    data["version"] = latest_version
+    if sent:
 
-    data["version_code"] = latest_code
+        data["version"] = latest_version
 
-    data["release_time"] = release_time
+        data["version_code"] = latest_code
 
-    save_data(data)
+        data["release_time"] = release_time
 
-    print(
-        "New version saved.",
-        flush=True
-    )
+        save_data(data)
+
+        print(
+            "New version saved.",
+            flush=True
+        )
 
 
-# =========================
-# BEFORE CHECKER STARTS
-# =========================
+# =========================================================
+# WAIT FOR DISCORD
+# =========================================================
 
 @check_for_updates.before_loop
 async def before_update_check():
@@ -551,9 +659,9 @@ async def before_update_check():
     )
 
 
-# =========================
+# =========================================================
 # BOT READY
-# =========================
+# =========================================================
 
 @bot.event
 async def on_ready():
@@ -596,6 +704,7 @@ async def on_ready():
         flush=True
     )
 
+    # Start automatic checker
     if not check_for_updates.is_running():
 
         check_for_updates.start()
@@ -614,9 +723,9 @@ async def on_ready():
         )
 
 
-# =========================
+# =========================================================
 # MANUAL TEST COMMAND
-# =========================
+# =========================================================
 
 @bot.command()
 @commands.has_permissions(
@@ -629,14 +738,35 @@ async def testupdate(ctx):
     )
 
     release_time = now.strftime(
-        "%B %d, %Y at %I:%M %p UTC"
+        "%A, %B %d, %Y at %I:%M %p UTC"
     )
+
+    # Get current Animal Company artwork
+    try:
+
+        latest = await fetch_animal_company()
+
+        image_url = latest["image_url"]
+
+        logo_url = latest["logo_url"]
+
+    except Exception:
+
+        image_url = None
+
+        logo_url = None
+
+    # =====================================================
+    # TEST EMBED
+    # =====================================================
 
     embed = make_update_embed(
         previous_version="1.90.0.3474",
         new_version="1.90.1.3492",
         version_code="3492",
-        release_time=release_time
+        release_time=release_time,
+        image_url=image_url,
+        logo_url=logo_url
     )
 
     role_mention = (
@@ -657,9 +787,9 @@ async def testupdate(ctx):
     )
 
 
-# =========================
-# ERROR HANDLER
-# =========================
+# =========================================================
+# COMMAND ERROR HANDLER
+# =========================================================
 
 @bot.event
 async def on_command_error(
@@ -687,28 +817,14 @@ async def on_command_error(
     )
 
 
-# =========================
-# START
-# =========================
+# =========================================================
+# START BOT
+# =========================================================
 
 if not TOKEN:
 
     raise RuntimeError(
         "DISCORD_TOKEN is missing!"
-    )
-
-
-if UPDATE_CHANNEL_ID == 0:
-
-    raise RuntimeError(
-        "UPDATE_CHANNEL_ID is missing!"
-    )
-
-
-if UPDATE_ROLE_ID == 0:
-
-    raise RuntimeError(
-        "UPDATE_ROLE_ID is missing!"
     )
 
 
