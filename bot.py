@@ -42,23 +42,26 @@ DATA_FILE = "update_data.json"
 
 
 # ============================================================
-# META / OCULUS
+# OCULUS GRAPHQL
 # ============================================================
 
 OCULUS_GRAPHQL_URL = (
     "https://graph.oculus.com/graphql"
 )
 
+# Public Oculus Store token
 OCULUS_TOKEN = (
-    "OC|1076686279105243|"
+    "OC|752908224809889|"
 )
 
-STORE_DOC_ID = (
-    "8571881679548867"
+# Documented "Latest version of an App" query
+LATEST_VERSION_DOC_ID = (
+    "5373392672732392"
 )
 
-DETAILS_DOC_ID = (
-    "3828663700542720"
+# Older documented "Versions of App" query
+VERSIONS_DOC_ID = (
+    "1586217024733717"
 )
 
 
@@ -141,16 +144,12 @@ def run_web_server():
 # ============================================================
 
 intents = discord.Intents.default()
-
 intents.message_content = True
 
 bot = commands.Bot(
     command_prefix="!",
     intents=intents
 )
-
-
-startup_check_done = False
 
 
 # ============================================================
@@ -186,9 +185,7 @@ def load_saved_version():
 
             data = json.load(f)
 
-        version = data.get(
-            "version"
-        )
+        version = data.get("version")
 
         if version:
 
@@ -260,65 +257,204 @@ def normalize_version(version):
     return str(version).strip()
 
 
+def is_version_string(value):
+
+    if value is None:
+        return False
+
+    value = str(value).strip()
+
+    if not value:
+        return False
+
+    # Animal Company versions look like:
+    # 1.90.2.3504
+    parts = value.split(".")
+
+    if len(parts) < 3:
+        return False
+
+    return all(
+        part.isdigit()
+        for part in parts
+    )
+
+
+def find_version_data(obj):
+
+    """
+    Search an unknown Oculus GraphQL response recursively.
+
+    Different Oculus queries have returned slightly different
+    response structures over time, so we search for version
+    and version-code fields instead of assuming one exact layout.
+    """
+
+    if isinstance(obj, dict):
+
+        version_keys = [
+            "version",
+            "version_name",
+            "versionName"
+        ]
+
+        code_keys = [
+            "version_code",
+            "versioncode",
+            "versionCode"
+        ]
+
+        version = None
+        version_code = None
+
+        for key in version_keys:
+
+            value = obj.get(key)
+
+            if is_version_string(value):
+
+                version = str(value).strip()
+                break
+
+        for key in code_keys:
+
+            value = obj.get(key)
+
+            if value is not None:
+
+                text = str(value).strip()
+
+                if text.isdigit():
+
+                    version_code = value
+                    break
+
+        if version:
+
+            return {
+                "version": version,
+                "version_code": version_code
+            }
+
+        for value in obj.values():
+
+            result = find_version_data(value)
+
+            if result:
+                return result
+
+    elif isinstance(obj, list):
+
+        for item in obj:
+
+            result = find_version_data(item)
+
+            if result:
+                return result
+
+    return None
+
+
 # ============================================================
-# GRAPHQL REQUEST
+# OCULUS GRAPHQL REQUEST
 # ============================================================
 
-async def graphql_request(
+async def oculus_graphql_request(
     session,
-    url,
-    payload,
-    headers=None,
-    timeout_seconds=20
+    doc_id,
+    variables
 ):
 
     try:
 
         timeout = aiohttp.ClientTimeout(
-            total=timeout_seconds
+            total=20
+        )
+
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": (
+                "Mozilla/5.0 "
+                "(Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/151.0 Safari/537.36"
+            ),
+            "TE": "Trailers"
+        }
+
+        # Oculus expects the GraphQL parameters as form data
+        # rather than the JSON body used by the previous code.
+
+        form_data = {
+            "access_token": OCULUS_TOKEN,
+            "variables": json.dumps(
+                variables,
+                separators=(",", ":")
+            ),
+            "doc_id": doc_id
+        }
+
+        logger.info(
+            "Sending Oculus GraphQL request with doc_id %s...",
+            doc_id
         )
 
         async with session.post(
-            url,
-            json=payload,
-            headers=headers or {},
+            OCULUS_GRAPHQL_URL,
+            data=form_data,
+            headers=headers,
             timeout=timeout
         ) as response:
 
             text = await response.text()
 
             logger.info(
-                "GraphQL response HTTP status: %s",
+                "Oculus GraphQL HTTP status: %s",
                 response.status
             )
 
             if response.status != 200:
 
                 logger.error(
-                    "GraphQL HTTP %s response: %s",
+                    "Oculus GraphQL HTTP %s: %s",
                     response.status,
-                    text[:2000]
+                    text[:3000]
                 )
 
                 return None
 
             try:
 
-                return json.loads(text)
+                data = json.loads(text)
 
             except json.JSONDecodeError:
 
                 logger.error(
-                    "GraphQL returned invalid JSON: %s",
-                    text[:2000]
+                    "Oculus GraphQL returned invalid JSON: %s",
+                    text[:3000]
                 )
 
                 return None
 
+            if isinstance(data, dict) and data.get("errors"):
+
+                logger.error(
+                    "Oculus GraphQL returned errors: %s",
+                    json.dumps(
+                        data.get("errors"),
+                        indent=2
+                    )[:3000]
+                )
+
+                return None
+
+            return data
+
     except asyncio.TimeoutError:
 
         logger.error(
-            "GraphQL request timed out."
+            "Oculus GraphQL request timed out."
         )
 
         return None
@@ -326,7 +462,7 @@ async def graphql_request(
     except aiohttp.ClientError as e:
 
         logger.error(
-            "GraphQL network error: %s",
+            "Oculus GraphQL network error: %s",
             e
         )
 
@@ -335,7 +471,7 @@ async def graphql_request(
     except Exception as e:
 
         logger.exception(
-            "Unexpected GraphQL error: %s",
+            "Unexpected Oculus GraphQL error: %s",
             e
         )
 
@@ -343,200 +479,153 @@ async def graphql_request(
 
 
 # ============================================================
-# META GRAPHQL VERSION
+# LIVE OCULUS VERSION
 # ============================================================
 
-async def get_meta_version():
+async def get_oculus_latest_version():
 
     logger.info(
-        "Fetching current Animal Company version..."
+        "=============================================="
     )
 
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": (
-            "Mozilla/5.0 "
-            "(Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 "
-            "(KHTML, like Gecko) "
-            "Chrome/151.0 Safari/537.36"
-        )
+    logger.info(
+        "TRYING LIVE OCULUS VERSION SOURCE..."
+    )
+
+    logger.info(
+        "=============================================="
+    )
+
+    variables = {
+        "itemId": APP_ID,
+        "first": 5,
+        "last": None,
+        "after": None,
+        "before": None,
+        "forward": True,
+        "ordering": None,
+        "ratingScores": None,
+        "hmdType": "MONTEREY"
     }
 
     async with aiohttp.ClientSession() as session:
 
-        # ----------------------------------------------------
-        # STORE REQUEST
-        # ----------------------------------------------------
-
-        store_payload = {
-            "doc_id": STORE_DOC_ID,
-            "access_token": OCULUS_TOKEN,
-            "variables": json.dumps(
-                {
-                    "applicationID": APP_ID
-                }
-            )
-        }
-
-        logger.info(
-            "Requesting Meta store information..."
-        )
-
-        store_data = await graphql_request(
+        data = await oculus_graphql_request(
             session,
-            OCULUS_GRAPHQL_URL,
-            store_payload,
-            headers=headers
+            LATEST_VERSION_DOC_ID,
+            variables
         )
 
-        if store_data is None:
+    if not data:
 
-            logger.warning(
-                "Meta store request failed."
-            )
-
-        else:
-
-            logger.info(
-                "Meta store request succeeded."
-            )
-
-        # ----------------------------------------------------
-        # DETAILS REQUEST
-        # ----------------------------------------------------
-
-        details_payload = {
-            "doc_id": DETAILS_DOC_ID,
-            "access_token": OCULUS_TOKEN,
-            "variables": json.dumps(
-                {
-                    "applicationID": APP_ID
-                }
-            )
-        }
-
-        logger.info(
-            "Requesting Meta application details..."
-        )
-
-        details_data = await graphql_request(
-            session,
-            OCULUS_GRAPHQL_URL,
-            details_payload,
-            headers=headers
-        )
-
-        if details_data is None:
-
-            logger.error(
-                "Could not get Meta application details."
-            )
-
-            return None
-
-        logger.info(
-            "Meta application details request succeeded."
-        )
-
-    # --------------------------------------------------------
-    # EXTRACT VERSION
-    # --------------------------------------------------------
-
-    try:
-
-        node = (
-            details_data
-            .get("data", {})
-            .get("node", {})
-        )
-
-        release_channels = (
-            node.get(
-                "release_channels",
-                {}
-            )
-        )
-
-        nodes = (
-            release_channels.get(
-                "nodes",
-                []
-            )
-        )
-
-        if not nodes:
-
-            logger.error(
-                "Meta response contained no release channels."
-            )
-
-            logger.error(
-                "Response structure: %s",
-                json.dumps(
-                    details_data,
-                    indent=2
-                )[:5000]
-            )
-
-            return None
-
-        latest_binary = (
-            nodes[0]
-            .get(
-                "latest_supported_binary",
-                {}
-            )
-        )
-
-        version = latest_binary.get(
-            "version"
-        )
-
-        version_code = latest_binary.get(
-            "version_code"
-        )
-
-        if not version:
-
-            logger.error(
-                "Meta response did not contain a version."
-            )
-
-            logger.error(
-                "Latest binary: %s",
-                latest_binary
-            )
-
-            return None
-
-        logger.info(
-            "CURRENT ANIMAL COMPANY VERSION: %s",
-            version
-        )
-
-        logger.info(
-            "CURRENT VERSION CODE: %s",
-            version_code
-        )
-
-        return {
-            "version": normalize_version(
-                version
-            ),
-            "version_code": version_code,
-            "channel": "LIVE"
-        }
-
-    except Exception as e:
-
-        logger.exception(
-            "Error extracting Meta version: %s",
-            e
+        logger.warning(
+            "Live Oculus latest-version request failed."
         )
 
         return None
+
+    logger.info(
+        "Live Oculus request succeeded."
+    )
+
+    result = find_version_data(data)
+
+    if not result:
+
+        logger.error(
+            "Oculus response did not contain a recognizable "
+            "version."
+        )
+
+        logger.error(
+            "Oculus response: %s",
+            json.dumps(
+                data,
+                indent=2
+            )[:8000]
+        )
+
+        return None
+
+    version = result.get("version")
+    version_code = result.get("version_code")
+
+    logger.info(
+        "LIVE OCULUS VERSION FOUND: %s",
+        version
+    )
+
+    logger.info(
+        "LIVE OCULUS VERSION CODE: %s",
+        version_code
+    )
+
+    return {
+        "version": normalize_version(version),
+        "version_code": version_code,
+        "channel": "LIVE"
+    }
+
+
+# ============================================================
+# SECOND OCULUS VERSION QUERY
+# ============================================================
+
+async def get_oculus_versions_query():
+
+    logger.info(
+        "Trying secondary Oculus versions query..."
+    )
+
+    variables = {
+        "id": APP_ID
+    }
+
+    async with aiohttp.ClientSession() as session:
+
+        data = await oculus_graphql_request(
+            session,
+            VERSIONS_DOC_ID,
+            variables
+        )
+
+    if not data:
+
+        logger.warning(
+            "Secondary Oculus versions query failed."
+        )
+
+        return None
+
+    result = find_version_data(data)
+
+    if not result:
+
+        logger.warning(
+            "Secondary Oculus response did not contain "
+            "a recognizable version."
+        )
+
+        return None
+
+    version = result.get("version")
+    version_code = result.get("version_code")
+
+    logger.info(
+        "SECONDARY OCULUS VERSION FOUND: %s",
+        version
+    )
+
+    logger.info(
+        "SECONDARY OCULUS VERSION CODE: %s",
+        version_code
+    )
+
+    return {
+        "version": normalize_version(version),
+        "version_code": version_code,
+        "channel": "LIVE"
+    }
 
 
 # ============================================================
@@ -585,10 +674,6 @@ async def get_metadata_fallback():
 
                 data = json.loads(text)
 
-                # ------------------------------------------------
-                # SAVE IMAGE URLS
-                # ------------------------------------------------
-
                 global ANIMAL_COMPANY_IMAGES
 
                 ANIMAL_COMPANY_IMAGES = {
@@ -604,17 +689,8 @@ async def get_metadata_fallback():
                     "Animal Company artwork URLs loaded."
                 )
 
-                # ------------------------------------------------
-                # VERSION
-                # ------------------------------------------------
-
-                version = data.get(
-                    "version"
-                )
-
-                version_code = data.get(
-                    "versioncode"
-                )
+                version = data.get("version")
+                version_code = data.get("versioncode")
 
                 if not version:
 
@@ -659,36 +735,63 @@ async def get_metadata_fallback():
 
 async def get_current_version():
 
-    data = await get_meta_version()
+    # --------------------------------------------------------
+    # 1. PRIMARY LIVE OCULUS SOURCE
+    # --------------------------------------------------------
+
+    data = await get_oculus_latest_version()
 
     if data:
 
-        # Make sure we also have artwork.
-        if not ANIMAL_COMPANY_IMAGES.get(
-            "icon"
-        ):
+        # Get artwork separately.
+        if not ANIMAL_COMPANY_IMAGES.get("icon"):
 
-            fallback = (
-                await get_metadata_fallback()
-            )
+            artwork = await get_metadata_fallback()
 
-            if fallback:
+            if artwork:
 
-                data["images"] = (
-                    fallback.get(
-                        "images",
-                        {}
-                    )
+                data["images"] = artwork.get(
+                    "images",
+                    {}
                 )
 
         return data
 
+    # --------------------------------------------------------
+    # 2. SECONDARY OCULUS SOURCE
+    # --------------------------------------------------------
+
     logger.warning(
-        "Meta GraphQL failed."
+        "Primary Oculus version source failed."
+    )
+
+    data = await get_oculus_versions_query()
+
+    if data:
+
+        if not ANIMAL_COMPANY_IMAGES.get("icon"):
+
+            artwork = await get_metadata_fallback()
+
+            if artwork:
+
+                data["images"] = artwork.get(
+                    "images",
+                    {}
+                )
+
+        return data
+
+    # --------------------------------------------------------
+    # 3. METAMETADATA FALLBACK
+    # --------------------------------------------------------
+
+    logger.warning(
+        "All live Oculus version queries failed."
     )
 
     logger.warning(
-        "Trying fallback source..."
+        "Using MetaMetadata fallback."
     )
 
     return await get_metadata_fallback()
@@ -771,46 +874,21 @@ def build_update_embed(
 
         images = ANIMAL_COMPANY_IMAGES
 
-    # --------------------------------------------------------
-    # IMAGE URLS
-    # --------------------------------------------------------
+    icon_url = images.get("icon")
+    logo_url = images.get("logo")
+    landscape_url = images.get("landscape")
+    hero_url = images.get("hero")
 
-    icon_url = images.get(
-        "icon"
-    )
-
-    logo_url = images.get(
-        "logo"
-    )
-
-    landscape_url = images.get(
-        "landscape"
-    )
-
-    hero_url = images.get(
-        "hero"
-    )
-
-    # Use landscape first.
-    # If unavailable, use hero.
     large_image_url = (
         landscape_url
         or hero_url
     )
-
-    # --------------------------------------------------------
-    # EMBED
-    # --------------------------------------------------------
 
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
         color=discord.Color.orange(),
         timestamp=released
     )
-
-    # --------------------------------------------------------
-    # AUTHOR
-    # --------------------------------------------------------
 
     if logo_url or icon_url:
 
@@ -827,10 +905,6 @@ def build_update_embed(
         embed.set_author(
             name="Animal Company"
         )
-
-    # --------------------------------------------------------
-    # VERSION FIELDS
-    # --------------------------------------------------------
 
     embed.add_field(
         name="⬅️ Previous Version",
@@ -850,35 +924,21 @@ def build_update_embed(
         inline=True
     )
 
-    # --------------------------------------------------------
-    # RELEASED
-    # --------------------------------------------------------
-
     released_unix = int(
         released.timestamp()
     )
 
     embed.add_field(
         name="🕐 Released",
-        value=(
-            f"<t:{released_unix}:F>"
-        ),
+        value=f"<t:{released_unix}:F>",
         inline=False
     )
-
-    # --------------------------------------------------------
-    # CHANNEL
-    # --------------------------------------------------------
 
     embed.add_field(
         name="📡 Channel",
         value=f"`{channel_name}`",
         inline=True
     )
-
-    # --------------------------------------------------------
-    # META STORE
-    # --------------------------------------------------------
 
     embed.add_field(
         name="🔗 Meta Store",
@@ -889,19 +949,11 @@ def build_update_embed(
         inline=True
     )
 
-    # --------------------------------------------------------
-    # THUMBNAIL
-    # --------------------------------------------------------
-
     if icon_url:
 
         embed.set_thumbnail(
             url=icon_url
         )
-
-    # --------------------------------------------------------
-    # LARGE ARTWORK
-    # --------------------------------------------------------
 
     if large_image_url:
 
@@ -930,9 +982,7 @@ async def check_for_updates():
         "=============================================="
     )
 
-    current_data = (
-        await get_current_version()
-    )
+    current_data = await get_current_version()
 
     if not current_data:
 
@@ -943,22 +993,15 @@ async def check_for_updates():
 
         return
 
-    new_version = current_data.get(
-        "version"
-    )
-
-    version_code = current_data.get(
-        "version_code"
-    )
+    new_version = current_data.get("version")
+    version_code = current_data.get("version_code")
 
     channel_name = current_data.get(
         "channel",
         "LIVE"
     )
 
-    images = current_data.get(
-        "images"
-    )
+    images = current_data.get("images")
 
     if images:
 
@@ -978,9 +1021,7 @@ async def check_for_updates():
         version_code
     )
 
-    old_version = (
-        load_saved_version()
-    )
+    old_version = load_saved_version()
 
     # --------------------------------------------------------
     # FIRST RUN
@@ -1009,13 +1050,9 @@ async def check_for_updates():
     # --------------------------------------------------------
 
     if (
-        normalize_version(
-            old_version
-        )
+        normalize_version(old_version)
         ==
-        normalize_version(
-            new_version
-        )
+        normalize_version(new_version)
     ):
 
         logger.info(
@@ -1051,9 +1088,7 @@ async def check_for_updates():
         "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     )
 
-    channel = (
-        await get_update_channel()
-    )
+    channel = await get_update_channel()
 
     if not channel:
 
@@ -1170,8 +1205,6 @@ async def before_update_checker():
 @bot.event
 async def on_connect():
 
-    global startup_check_done
-
     logger.info(
         "=============================================="
     )
@@ -1201,36 +1234,6 @@ async def on_connect():
         logger.info(
             "Automatic update checker "
             "is already running."
-        )
-
-    if not startup_check_done:
-
-        startup_check_done = True
-
-        logger.info(
-            "Waiting 5 seconds before "
-            "initial update check..."
-        )
-
-        await asyncio.sleep(5)
-
-        logger.info(
-            "RUNNING INITIAL UPDATE CHECK..."
-        )
-
-        try:
-
-            await check_for_updates()
-
-        except Exception as e:
-
-            logger.exception(
-                "INITIAL UPDATE CHECK FAILED: %s",
-                e
-            )
-
-        logger.info(
-            "INITIAL UPDATE CHECK FINISHED."
         )
 
 
@@ -1292,10 +1295,7 @@ async def test_update(ctx):
         ctx.author
     )
 
-    # Get artwork if it hasn't been loaded yet.
-    if not ANIMAL_COMPANY_IMAGES.get(
-        "icon"
-    ):
+    if not ANIMAL_COMPANY_IMAGES.get("icon"):
 
         await get_metadata_fallback()
 
@@ -1313,9 +1313,7 @@ async def test_update(ctx):
     try:
 
         await ctx.send(
-            content=(
-                f"<@&{UPDATE_ROLE_ID}>"
-            ),
+            content=f"<@&{UPDATE_ROLE_ID}>",
             embed=embed,
             allowed_mentions=discord.AllowedMentions(
                 roles=True
@@ -1427,10 +1425,6 @@ def main():
         "=============================================="
     )
 
-    # --------------------------------------------------------
-    # START FLASK
-    # --------------------------------------------------------
-
     web_thread = threading.Thread(
         target=run_web_server,
         daemon=True
@@ -1441,10 +1435,6 @@ def main():
     logger.info(
         "Web server started."
     )
-
-    # --------------------------------------------------------
-    # START DISCORD
-    # --------------------------------------------------------
 
     logger.info(
         "Starting Discord bot..."
