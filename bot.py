@@ -25,16 +25,13 @@ CHECK_MINUTES = 2
 
 ANIMAL_COMPANY_ID = "7190422614401072"
 
-# Oculus GraphQL endpoint used by MetaMetadata
 OCULUS_GRAPHQL_URL = "https://graph.oculus.com/graphql"
 
-# Animal Company Meta Store page
 META_STORE_URL = (
     "https://www.meta.com/experiences/animal-company/"
     "7190422614401072/"
 )
 
-# Animal Company website icon
 ANIMAL_COMPANY_ICON = (
     "https://www.animalcompanyvr.com/favicon.ico"
 )
@@ -43,7 +40,7 @@ DATA_FILE = "update_data.json"
 
 
 # ============================================================
-# FLASK SERVER
+# FLASK
 # ============================================================
 
 app = Flask(__name__)
@@ -56,11 +53,14 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
 
 
 # ============================================================
-# DISCORD BOT
+# DISCORD
 # ============================================================
 
 intents = discord.Intents.default()
@@ -73,51 +73,86 @@ bot = commands.Bot(
 
 
 # ============================================================
-# SAVED VERSION DATA
+# SAVED DATA
 # ============================================================
 
 def load_saved_data():
+
     if not os.path.exists(DATA_FILE):
         return None
 
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
+
+        with open(
+            DATA_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             return json.load(f)
 
     except Exception as e:
-        print(f"Could not read {DATA_FILE}: {e}")
+
+        print(
+            f"ERROR reading saved data: {e}"
+        )
+
         return None
 
 
-def save_version(version, version_code):
+def save_version(
+    version,
+    version_code
+):
+
     data = {
-        "version": version,
-        "version_code": version_code
+        "version": str(version),
+        "version_code": int(version_code)
     }
 
     try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+
+        with open(
+            DATA_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
+            json.dump(
+                data,
+                f,
+                indent=2
+            )
 
         print(
-            f"Saved version: {version} "
+            f"Saved version: "
+            f"{version} "
             f"(code {version_code})"
         )
 
     except Exception as e:
-        print(f"Could not save version: {e}")
+
+        print(
+            f"ERROR saving version: {e}"
+        )
 
 
 # ============================================================
-# GRAPHQL
+# META GRAPHQL
 # ============================================================
 
 async def graphql_request(payload):
-    print("Sending request to Meta Oculus GraphQL...")
 
-    timeout = aiohttp.ClientTimeout(total=30)
+    print(
+        "Sending request to Meta GraphQL..."
+    )
+
+    timeout = aiohttp.ClientTimeout(
+        total=30
+    )
 
     try:
+
         async with aiohttp.ClientSession(
             timeout=timeout
         ) as session:
@@ -130,56 +165,69 @@ async def graphql_request(payload):
                 text = await response.text()
 
                 print(
-                    f"Meta GraphQL HTTP status: "
+                    f"Meta HTTP status: "
                     f"{response.status}"
                 )
 
                 if response.status != 200:
+
                     print(
-                        "Meta GraphQL error response:"
+                        "Meta returned an error:"
                     )
-                    print(text[:3000])
+
+                    print(
+                        text[:5000]
+                    )
 
                     return None
 
                 try:
+
                     return json.loads(text)
 
-                except json.JSONDecodeError:
+                except Exception:
+
                     print(
-                        "Meta returned something that "
-                        "was not valid JSON."
+                        "Meta response was "
+                        "not JSON:"
                     )
-                    print(text[:3000])
+
+                    print(
+                        text[:5000]
+                    )
+
                     return None
 
     except Exception as e:
+
         print(
-            f"Meta GraphQL connection error: {e}"
+            f"ERROR connecting to Meta: {e}"
         )
+
         return None
 
 
 # ============================================================
-# GET ANIMAL COMPANY VERSION
+# GET VERSION
 # ============================================================
 
 async def fetch_meta_version():
+
     print(
         "Fetching current Animal Company version..."
     )
 
-    # --------------------------------------------------------
-    # Request 1:
-    # Get the store information.
-    # This follows the current MetaMetadata approach.
-    # --------------------------------------------------------
-
+    # First request
     store_payload = {
+
         "doc_id": "8571881679548867",
-        "access_token": "OC|1076686279105243|",
+
+        "access_token":
+            "OC|1076686279105243|",
+
         "variables": json.dumps({
-            "applicationID": ANIMAL_COMPANY_ID
+            "applicationID":
+                ANIMAL_COMPANY_ID
         })
     }
 
@@ -187,41 +235,41 @@ async def fetch_meta_version():
         store_payload
     )
 
-    if store_data is None:
+    if store_data is not None:
+
         print(
-            "Store GraphQL request failed."
+            "Store request completed."
         )
 
-    else:
-        print(
-            "Store GraphQL request succeeded."
-        )
+    # Second request
+    details_payload = {
 
-    # --------------------------------------------------------
-    # Request 2:
-    # Get the latest supported binary.
-    # --------------------------------------------------------
-
-    app_details_payload = {
         "doc_id": "3828663700542720",
-        "access_token": "OC|1076686279105243|",
+
+        "access_token":
+            "OC|1076686279105243|",
+
         "variables": json.dumps({
-            "applicationID": ANIMAL_COMPANY_ID
+            "applicationID":
+                ANIMAL_COMPANY_ID
         })
     }
 
     data = await graphql_request(
-        app_details_payload
+        details_payload
     )
 
     if data is None:
+
         print(
-            "Could not get Animal Company "
-            "version data from Meta."
+            "Could not retrieve "
+            "Animal Company version."
         )
+
         return None
 
     try:
+
         node = (
             data
             .get("data", {})
@@ -229,16 +277,18 @@ async def fetch_meta_version():
         )
 
         if not node:
+
             print(
-                "Meta response did not contain "
-                "the application node."
+                "Meta response has no node."
             )
+
             print(
                 json.dumps(
                     data,
                     indent=2
                 )[:5000]
             )
+
             return None
 
         release_channels = (
@@ -248,10 +298,12 @@ async def fetch_meta_version():
         )
 
         if not release_channels:
+
             print(
-                "Meta response did not contain "
-                "release channels."
+                "No release channels "
+                "were returned."
             )
+
             return None
 
         latest_binary = (
@@ -260,33 +312,52 @@ async def fetch_meta_version():
         )
 
         if not latest_binary:
+
             print(
-                "Meta response did not contain "
-                "latest_supported_binary."
+                "No latest supported "
+                "binary was returned."
             )
+
             return None
 
-        version = latest_binary.get("version")
+        version = latest_binary.get(
+            "version"
+        )
+
         version_code = latest_binary.get(
             "version_code"
         )
 
-        if not version:
+        if version is None:
+
             print(
                 "Meta returned no version."
             )
+
             return None
 
         if version_code is None:
+
             print(
                 "Meta returned no version code."
             )
+
             return None
 
         print(
-            f"Animal Company version found: "
-            f"{version} "
-            f"(code {version_code})"
+            "================================"
+        )
+
+        print(
+            f"CURRENT VERSION: {version}"
+        )
+
+        print(
+            f"VERSION CODE: {version_code}"
+        )
+
+        print(
+            "================================"
         )
 
         return {
@@ -295,8 +366,9 @@ async def fetch_meta_version():
         }
 
     except Exception as e:
+
         print(
-            f"Could not parse Meta response: {e}"
+            f"ERROR parsing Meta data: {e}"
         )
 
         print(
@@ -310,10 +382,11 @@ async def fetch_meta_version():
 
 
 # ============================================================
-# GET UPDATE ARTWORK
+# ARTWORK
 # ============================================================
 
 async def get_update_artwork():
+
     url = (
         "https://raw.githubusercontent.com/"
         "threethan/MetaMetadata/main/data/common/"
@@ -321,25 +394,26 @@ async def get_update_artwork():
     )
 
     try:
-        timeout = aiohttp.ClientTimeout(total=20)
+
+        timeout = aiohttp.ClientTimeout(
+            total=20
+        )
 
         async with aiohttp.ClientSession(
             timeout=timeout
         ) as session:
 
-            async with session.get(url) as response:
+            async with session.get(
+                url
+            ) as response:
 
                 if response.status != 200:
-                    print(
-                        "Could not download "
-                        "Animal Company artwork data."
-                    )
+
                     return None
 
                 data = await response.json()
 
-        # Try several possible artwork fields.
-        possible_fields = [
+        fields = [
             "hero",
             "landscape",
             "banner",
@@ -351,25 +425,30 @@ async def get_update_artwork():
             "portrait"
         ]
 
-        for field in possible_fields:
+        for field in fields:
+
             value = data.get(field)
 
-            if isinstance(value, str) and value.startswith(
-                "http"
+            if (
+                isinstance(value, str)
+                and value.startswith("http")
             ):
+
                 return value
 
         return None
 
     except Exception as e:
+
         print(
-            f"Could not get update artwork: {e}"
+            f"Artwork error: {e}"
         )
+
         return None
 
 
 # ============================================================
-# SEND UPDATE EMBED
+# SEND UPDATE
 # ============================================================
 
 async def send_update(
@@ -378,19 +457,33 @@ async def send_update(
     version_code
 ):
 
+    print(
+        "Preparing Discord update message..."
+    )
+
     channel = bot.get_channel(
         UPDATE_CHANNEL_ID
     )
 
     if channel is None:
+
+        print(
+            "Channel not cached. "
+            "Fetching channel..."
+        )
+
         try:
+
             channel = await bot.fetch_channel(
                 UPDATE_CHANNEL_ID
             )
+
         except Exception as e:
+
             print(
-                f"Could not find update channel: {e}"
+                f"ERROR finding channel: {e}"
             )
+
             return False
 
     artwork = await get_update_artwork()
@@ -400,18 +493,10 @@ async def send_update(
         color=discord.Color.blue()
     )
 
-    # --------------------------------------------------------
-    # Author
-    # --------------------------------------------------------
-
     embed.set_author(
         name="Animal Company",
         icon_url=ANIMAL_COMPANY_ICON
     )
-
-    # --------------------------------------------------------
-    # Version row
-    # --------------------------------------------------------
 
     embed.add_field(
         name="⬅️ Previous Version",
@@ -431,21 +516,13 @@ async def send_update(
         inline=True
     )
 
-    # --------------------------------------------------------
-    # Released
-    # --------------------------------------------------------
-
     embed.add_field(
         name="🕐 Released",
-        value="<t:%d:R>" % int(
-            discord.utils.utcnow().timestamp()
+        value=(
+            f"<t:{int(discord.utils.utcnow().timestamp())}:R>"
         ),
         inline=False
     )
-
-    # --------------------------------------------------------
-    # Channel + Meta Store
-    # --------------------------------------------------------
 
     embed.add_field(
         name="📡 Channel",
@@ -462,30 +539,22 @@ async def send_update(
         inline=True
     )
 
-    # --------------------------------------------------------
-    # Small thumbnail
-    # --------------------------------------------------------
-
     embed.set_thumbnail(
         url=ANIMAL_COMPANY_ICON
     )
 
-    # --------------------------------------------------------
-    # Large artwork
-    # --------------------------------------------------------
-
     if artwork:
+
         embed.set_image(
             url=artwork
         )
 
-    # --------------------------------------------------------
-    # Role mention
-    # --------------------------------------------------------
-
-    role_mention = f"<@&{UPDATE_ROLE_ID}>"
+    role_mention = (
+        f"<@&{UPDATE_ROLE_ID}>"
+    )
 
     try:
+
         await channel.send(
             content=role_mention,
             embed=embed,
@@ -495,58 +564,76 @@ async def send_update(
         )
 
         print(
-            "Update notification sent successfully."
+            "================================"
+        )
+
+        print(
+            "UPDATE MESSAGE SENT!"
+        )
+
+        print(
+            "================================"
         )
 
         return True
 
     except Exception as e:
+
         print(
-            f"Could not send update notification: {e}"
+            f"ERROR sending Discord message: {e}"
         )
 
         return False
 
 
 # ============================================================
-# UPDATE CHECKER
+# CHECK FOR UPDATES
 # ============================================================
 
 async def check_for_updates():
 
     print(
+        "--------------------------------"
+    )
+
+    print(
         "Checking for Animal Company updates..."
+    )
+
+    print(
+        "--------------------------------"
     )
 
     current = await fetch_meta_version()
 
     if current is None:
+
         print(
-            "Update check failed: "
-            "Could not get Meta version data."
+            "Update check failed."
         )
+
         return
 
-    current_version = current["version"]
-    current_code = current["version_code"]
+    current_version = current[
+        "version"
+    ]
+
+    current_code = current[
+        "version_code"
+    ]
 
     saved = load_saved_data()
 
-    # --------------------------------------------------------
-    # First startup
-    # --------------------------------------------------------
-
+    # First run
     if saved is None:
 
         print(
-            "No previous version saved."
+            "This is the first successful check."
         )
 
         print(
-            f"Saving current version "
-            f"{current_version} "
-            f"(code {current_code}) "
-            f"without sending a notification."
+            f"Saving {current_version} "
+            f"(code {current_code})"
         )
 
         save_version(
@@ -565,38 +652,37 @@ async def check_for_updates():
     )
 
     print(
-        f"Saved version: "
-        f"{previous_version} "
+        f"Saved: {previous_version} "
         f"(code {previous_code})"
     )
 
     print(
-        f"Current version: "
-        f"{current_version} "
+        f"Current: {current_version} "
         f"(code {current_code})"
     )
 
-    # --------------------------------------------------------
-    # Nothing changed
-    # --------------------------------------------------------
-
+    # No update
     if (
         str(previous_version)
         == str(current_version)
-        and int(previous_code)
+        and
+        int(previous_code)
         == int(current_code)
     ):
+
         print(
-            "No new Animal Company update."
+            "No new update."
         )
+
         return
 
-    # --------------------------------------------------------
     # New update
-    # --------------------------------------------------------
+    print(
+        "================================"
+    )
 
     print(
-        "NEW ANIMAL COMPANY UPDATE DETECTED!"
+        "NEW UPDATE DETECTED!"
     )
 
     print(
@@ -605,8 +691,11 @@ async def check_for_updates():
     )
 
     print(
-        f"Version code: "
-        f"{current_code}"
+        f"New code: {current_code}"
+    )
+
+    print(
+        "================================"
     )
 
     sent = await send_update(
@@ -615,8 +704,6 @@ async def check_for_updates():
         current_code
     )
 
-    # Only save after Discord successfully
-    # receives the notification.
     if sent:
 
         save_version(
@@ -624,32 +711,29 @@ async def check_for_updates():
             current_code
         )
 
-        print(
-            "New version saved."
-        )
-
     else:
 
         print(
-            "Notification failed, so the "
-            "old version was NOT replaced."
+            "Message failed. "
+            "Saved version was not changed."
         )
 
 
 # ============================================================
-# AUTOMATIC LOOP
+# AUTOMATIC CHECKER
 # ============================================================
 
 @tasks.loop(minutes=CHECK_MINUTES)
 async def update_checker():
 
     try:
+
         await check_for_updates()
 
     except Exception as e:
 
         print(
-            f"Unexpected update checker error: {e}"
+            f"UPDATE CHECKER ERROR: {e}"
         )
 
 
@@ -671,7 +755,7 @@ async def before_update_checker():
 async def on_ready():
 
     print(
-        "================================================"
+        "========================================"
     )
 
     print(
@@ -683,21 +767,11 @@ async def on_ready():
     )
 
     print(
-        f"Update channel ID: "
-        f"{UPDATE_CHANNEL_ID}"
+        "Discord connection is READY."
     )
 
     print(
-        f"Update role ID: "
-        f"{UPDATE_ROLE_ID}"
-    )
-
-    print(
-        f"Checking every {CHECK_MINUTES} minutes."
-    )
-
-    print(
-        "================================================"
+        "========================================"
     )
 
     if not update_checker.is_running():
@@ -705,7 +779,24 @@ async def on_ready():
         update_checker.start()
 
         print(
-            "Automatic update checker started."
+            "Automatic checker started."
+        )
+
+    # Immediate check instead of waiting 2 minutes
+    await asyncio.sleep(5)
+
+    print(
+        "Running initial update check..."
+    )
+
+    try:
+
+        await check_for_updates()
+
+    except Exception as e:
+
+        print(
+            f"Initial check error: {e}"
         )
 
 
@@ -714,38 +805,36 @@ async def on_ready():
 # ============================================================
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(
+    administrator=True
+)
 async def testupdate(ctx):
 
     print(
-        "Manual test update requested."
+        "Test update command received."
     )
 
-    previous_version = "1.90.1.3492"
-    new_version = "1.90.2.3504"
-    version_code = 3504
-
     sent = await send_update(
-        previous_version,
-        new_version,
-        version_code
+        "1.90.1.3492",
+        "1.90.2.3504",
+        3504
     )
 
     if sent:
 
         await ctx.send(
-            "✅ Test update notification sent."
+            "✅ Test update sent."
         )
 
     else:
 
         await ctx.send(
-            "❌ Failed to send test notification."
+            "❌ Test update failed."
         )
 
 
 # ============================================================
-# COMMAND ERROR HANDLER
+# COMMAND ERRORS
 # ============================================================
 
 @bot.event
@@ -760,8 +849,8 @@ async def on_command_error(
     ):
 
         await ctx.send(
-            "❌ You need administrator permission "
-            "to use this command."
+            "❌ You need administrator "
+            "permission to use that."
         )
 
         return
@@ -770,6 +859,7 @@ async def on_command_error(
         error,
         commands.CommandNotFound
     ):
+
         return
 
     print(
@@ -778,7 +868,7 @@ async def on_command_error(
 
 
 # ============================================================
-# START BOT
+# MAIN
 # ============================================================
 
 def main():
@@ -786,7 +876,7 @@ def main():
     if not TOKEN:
 
         print(
-            "ERROR: DISCORD_TOKEN is not set."
+            "ERROR: DISCORD_TOKEN is missing!"
         )
 
         return
@@ -795,7 +885,6 @@ def main():
         "Starting Animal Company Update Bot..."
     )
 
-    # Start Flask so Render sees an open web port.
     web_thread = threading.Thread(
         target=run_web_server,
         daemon=True
@@ -814,5 +903,10 @@ def main():
     bot.run(TOKEN)
 
 
+# ============================================================
+# START
+# ============================================================
+
 if __name__ == "__main__":
+
     main()
