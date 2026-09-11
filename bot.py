@@ -1,14 +1,13 @@
 import os
 import json
-import asyncio
 import logging
 from datetime import datetime, timezone
+from threading import Thread
 
 import aiohttp
 import discord
 from discord.ext import commands, tasks
 from flask import Flask
-from threading import Thread
 
 
 # =========================================================
@@ -27,7 +26,7 @@ UPDATE_ROLE_ID = int(
 
 ANIMAL_COMPANY_APP_ID = "7190422614401072"
 
-# Meta/Oculus GraphQL
+# Oculus / Meta
 OCULUS_GRAPHQL_URL = "https://graph.oculus.com/graphql"
 OCULUS_TOKEN = "OC|1076686279105243|"
 
@@ -53,7 +52,7 @@ logger = logging.getLogger("animal-company-bot")
 
 
 # =========================================================
-# FLASK WEB SERVER
+# FLASK
 # =========================================================
 
 app = Flask(__name__)
@@ -66,6 +65,7 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
+
     app.run(
         host="0.0.0.0",
         port=port,
@@ -95,50 +95,66 @@ def load_state():
         return None
 
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        return data
+        with open(
+            STATE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            return json.load(f)
 
     except Exception as e:
-        logger.error(f"Could not load state: {e}")
+        logger.error(
+            f"Could not load state: {e}"
+        )
+
         return None
 
 
 def save_state(version, version_code):
-    data = {
-        "version": version,
-        "version_code": version_code
-    }
-
     try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        data = {
+            "version": version,
+            "version_code": version_code
+        }
+
+        with open(
+            STATE_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
+            json.dump(
+                data,
+                f,
+                indent=2
+            )
 
         logger.info(
-            f"Saved version state: {version} ({version_code})"
+            f"Saved version state: "
+            f"{version} ({version_code})"
         )
 
     except Exception as e:
-        logger.error(f"Could not save state: {e}")
+        logger.error(
+            f"Could not save state: {e}"
+        )
 
 
 # =========================================================
-# META/Oculus VERSION DETECTION
+# META / OCULUS
 # =========================================================
 
 async def fetch_live_version():
     """
-    Gets the current Animal Company LIVE version
-    directly from Meta/Oculus GraphQL.
+    Attempts to retrieve the LIVE Animal Company version
+    from Meta/Oculus GraphQL.
     """
 
     try:
         async with aiohttp.ClientSession() as session:
 
-            # -------------------------------------------------
-            # Request 1: Store information
-            # -------------------------------------------------
+            # ---------------------------------------------
+            # Store request
+            # ---------------------------------------------
 
             store_payload = {
                 "doc_id": "8571881679548867",
@@ -156,7 +172,8 @@ async def fetch_live_version():
                 store_text = await response.text()
 
                 logger.info(
-                    f"Oculus store request: HTTP {response.status}"
+                    f"Oculus store request: "
+                    f"HTTP {response.status}"
                 )
 
                 if response.status != 200:
@@ -165,15 +182,9 @@ async def fetch_live_version():
                         f"{store_text[:500]}"
                     )
 
-                else:
-                    try:
-                        json.loads(store_text)
-                    except Exception:
-                        pass
-
-            # -------------------------------------------------
-            # Request 2: Release channels
-            # -------------------------------------------------
+            # ---------------------------------------------
+            # Release-channel request
+            # ---------------------------------------------
 
             details_payload = {
                 "doc_id": "3828663700542720",
@@ -196,7 +207,8 @@ async def fetch_live_version():
                 details_text = await response.text()
 
                 logger.info(
-                    f"Oculus details request: HTTP {response.status}"
+                    f"Oculus details request: "
+                    f"HTTP {response.status}"
                 )
 
                 if response.status != 200:
@@ -204,19 +216,24 @@ async def fetch_live_version():
                         f"Oculus details response: "
                         f"{details_text[:700]}"
                     )
+
                     return None, None
 
                 try:
-                    details_data = json.loads(details_text)
-                except Exception as e:
-                    logger.error(
-                        f"Could not decode Oculus response: {e}"
+                    details_data = json.loads(
+                        details_text
                     )
+
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"Oculus returned invalid JSON: {e}"
+                    )
+
                     return None, None
 
-        # -----------------------------------------------------
-        # Parse response
-        # -----------------------------------------------------
+        # ---------------------------------------------
+        # Parse application
+        # ---------------------------------------------
 
         node = (
             details_data
@@ -228,6 +245,7 @@ async def fetch_live_version():
             logger.warning(
                 "Oculus response did not contain an app node."
             )
+
             return None, None
 
         release_channels = (
@@ -238,26 +256,28 @@ async def fetch_live_version():
 
         if not release_channels:
             logger.warning(
-                "Oculus response did not contain release channels."
+                "Oculus response did not contain "
+                "release channels."
             )
+
             return None, None
 
-        # -----------------------------------------------------
+        # ---------------------------------------------
         # Find LIVE channel
-        # -----------------------------------------------------
+        # ---------------------------------------------
 
         live_channel = None
 
         for channel in release_channels:
-            name = str(
+
+            channel_name = str(
                 channel.get("name", "")
             ).upper()
 
-            if name == "LIVE":
+            if channel_name == "LIVE":
                 live_channel = channel
                 break
 
-        # If LIVE isn't explicitly named, use first channel.
         if live_channel is None:
             live_channel = release_channels[0]
 
@@ -267,8 +287,9 @@ async def fetch_live_version():
 
         if not binary:
             logger.warning(
-                "LIVE channel has no latest supported binary."
+                "LIVE channel has no latest binary."
             )
+
             return None, None
 
         version = binary.get("version")
@@ -278,13 +299,11 @@ async def fetch_live_version():
             logger.warning(
                 "Oculus returned no version."
             )
+
             return None, None
 
-        version_code = (
-            str(version_code)
-            if version_code is not None
-            else None
-        )
+        if version_code is not None:
+            version_code = str(version_code)
 
         logger.info(
             f"Live Animal Company version: "
@@ -295,40 +314,76 @@ async def fetch_live_version():
 
     except Exception as e:
         logger.exception(
-            f"Oculus version lookup failed: {e}"
+            f"Oculus lookup failed: {e}"
         )
 
         return None, None
 
 
 # =========================================================
-# METADATA FALLBACK
+# METAMETADATA FALLBACK
 # =========================================================
 
 async def fetch_metadata_fallback():
     """
-    Gets version/artwork from MetaMetadata if the
-    direct Oculus request fails.
+    Reads MetaMetadata as TEXT and manually parses JSON.
+
+    GitHub may return the raw JSON with a text/plain
+    Content-Type, which is why response.json() failed.
     """
 
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=20)
+
+        async with aiohttp.ClientSession(
+            timeout=timeout
+        ) as session:
 
             async with session.get(
-                METADATA_URL,
-                timeout=aiohttp.ClientTimeout(total=20)
+                METADATA_URL
             ) as response:
+
+                text = await response.text()
+
+                logger.info(
+                    f"MetaMetadata request: "
+                    f"HTTP {response.status}"
+                )
 
                 if response.status != 200:
                     logger.warning(
-                        f"MetaMetadata HTTP {response.status}"
+                        f"MetaMetadata response: "
+                        f"{text[:500]}"
                     )
+
                     return None
 
-                data = await response.json()
+        try:
+            data = json.loads(text)
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"MetaMetadata returned invalid JSON: {e}"
+            )
+
+            logger.error(
+                f"Response begins with: {text[:300]}"
+            )
+
+            return None
 
         version = data.get("version")
         version_code = data.get("versioncode")
+
+        if not version:
+            logger.warning(
+                "MetaMetadata did not contain a version."
+            )
+
+            return None
+
+        if version_code is not None:
+            version_code = str(version_code)
 
         logger.info(
             f"Fallback version: {version}"
@@ -340,11 +395,7 @@ async def fetch_metadata_fallback():
 
         return {
             "version": version,
-            "version_code": (
-                str(version_code)
-                if version_code is not None
-                else None
-            ),
+            "version_code": version_code,
             "portrait": data.get("portrait"),
             "hero": data.get("hero"),
             "landscape": data.get("landscape"),
@@ -378,13 +429,15 @@ async def get_artwork():
             "icon": None
         }
 
-    logger.info("Animal Company artwork URLs loaded.")
+    logger.info(
+        "Animal Company artwork URLs loaded."
+    )
 
     return data
 
 
 # =========================================================
-# UPDATE EMBED
+# SEND UPDATE EMBED
 # =========================================================
 
 async def send_update(
@@ -393,13 +446,16 @@ async def send_update(
     version_code
 ):
 
-    channel = bot.get_channel(UPDATE_CHANNEL_ID)
+    channel = bot.get_channel(
+        UPDATE_CHANNEL_ID
+    )
 
     if channel is None:
         logger.error(
-            f"Could not find update channel "
+            f"Could not find channel "
             f"{UPDATE_CHANNEL_ID}"
         )
+
         return
 
     role = channel.guild.get_role(
@@ -408,22 +464,22 @@ async def send_update(
 
     if role is None:
         logger.error(
-            f"Could not find update role "
+            f"Could not find role "
             f"{UPDATE_ROLE_ID}"
         )
+
         return
 
     artwork = await get_artwork()
 
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
-        color=discord.Color.blue(),
-        timestamp=datetime.now(timezone.utc)
+        color=discord.Color.blue()
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Author
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     logo = artwork.get("logo")
 
@@ -432,24 +488,25 @@ async def send_update(
             name="Animal Company",
             icon_url=logo
         )
+
     else:
         embed.set_author(
             name="Animal Company"
         )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Version fields
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     embed.add_field(
         name="⬅️ Previous Version",
-        value=old_version,
+        value=str(old_version),
         inline=True
     )
 
     embed.add_field(
         name="📦 New Version",
-        value=new_version,
+        value=str(new_version),
         inline=True
     )
 
@@ -459,24 +516,22 @@ async def send_update(
         inline=True
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Released
-    # -----------------------------------------------------
-
-    released_time = datetime.now(timezone.utc)
+    # ---------------------------------------------
 
     embed.add_field(
         name="🕐 Released",
         value=discord.utils.format_dt(
-            released_time,
+            datetime.now(timezone.utc),
             style="F"
         ),
         inline=False
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Channel
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     embed.add_field(
         name="📡 Channel",
@@ -484,9 +539,9 @@ async def send_update(
         inline=True
     )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Meta Store
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     embed.add_field(
         name="🔗 Meta Store",
@@ -498,9 +553,9 @@ async def send_update(
         inline=True
     )
 
-    # -----------------------------------------------------
-    # Top-right thumbnail
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # Thumbnail
+    # ---------------------------------------------
 
     icon = artwork.get("icon")
 
@@ -509,9 +564,9 @@ async def send_update(
             url=icon
         )
 
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Large artwork
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     hero = artwork.get("hero")
 
@@ -526,9 +581,9 @@ async def send_update(
             url=hero
         )
 
-    # -----------------------------------------------------
-    # Send
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # Send notification
+    # ---------------------------------------------
 
     await channel.send(
         content=role.mention,
@@ -546,60 +601,61 @@ async def send_update(
 
 
 # =========================================================
-# UPDATE CHECKER
+# CHECK FOR UPDATE
 # =========================================================
 
 async def check_for_update():
-    logger.info("Checking Animal Company version...")
 
-    # -----------------------------------------------------
-    # Try direct Meta/Oculus first
-    # -----------------------------------------------------
+    logger.info(
+        "Checking Animal Company version..."
+    )
 
-    live_version, live_code = await fetch_live_version()
+    # ---------------------------------------------
+    # Try Oculus first
+    # ---------------------------------------------
 
-    # -----------------------------------------------------
-    # Fallback if direct lookup fails
-    # -----------------------------------------------------
+    live_version, live_code = (
+        await fetch_live_version()
+    )
+
+    # ---------------------------------------------
+    # Fallback
+    # ---------------------------------------------
 
     if not live_version:
+
         logger.warning(
             "Direct Oculus lookup failed. "
             "Using MetaMetadata fallback."
         )
 
-        fallback = await fetch_metadata_fallback()
+        fallback = (
+            await fetch_metadata_fallback()
+        )
 
         if not fallback:
             logger.error(
-                "Could not determine Animal Company version."
+                "Could not determine "
+                "Animal Company version."
             )
+
             return
 
         live_version = fallback["version"]
         live_code = fallback["version_code"]
 
-    # -----------------------------------------------------
-    # Validate
-    # -----------------------------------------------------
-
-    if not live_version:
-        logger.warning(
-            "Version was empty. Skipping."
-        )
-        return
-
-    # -----------------------------------------------------
+    # ---------------------------------------------
     # Load previous version
-    # -----------------------------------------------------
+    # ---------------------------------------------
 
     previous = load_state()
 
     if previous is None:
+
         logger.info(
             f"No previous saved version. "
-            f"Saving {live_version} ({live_code}) "
-            f"without sending notification."
+            f"Saving {live_version} "
+            f"({live_code}) without notification."
         )
 
         save_state(
@@ -609,8 +665,13 @@ async def check_for_update():
 
         return
 
-    old_version = previous.get("version")
-    old_code = previous.get("version_code")
+    old_version = previous.get(
+        "version"
+    )
+
+    old_code = previous.get(
+        "version_code"
+    )
 
     logger.info(
         f"Previous saved version: "
@@ -622,24 +683,26 @@ async def check_for_update():
         f"{live_version} ({live_code})"
     )
 
-    # -----------------------------------------------------
-    # Detect change
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # Check for change
+    # ---------------------------------------------
 
-    version_changed = (
+    changed = (
         old_version != live_version
         or str(old_code) != str(live_code)
     )
 
-    if not version_changed:
+    if not changed:
+
         logger.info(
             "No new update detected."
         )
+
         return
 
-    # -----------------------------------------------------
-    # New update!
-    # -----------------------------------------------------
+    # ---------------------------------------------
+    # New update
+    # ---------------------------------------------
 
     logger.info(
         f"NEW UPDATE DETECTED: "
@@ -659,11 +722,12 @@ async def check_for_update():
 
 
 # =========================================================
-# AUTOMATIC CHECK
+# AUTOMATIC CHECKER
 # =========================================================
 
 @tasks.loop(minutes=5)
 async def update_checker():
+
     try:
         await check_for_update()
 
@@ -678,17 +742,15 @@ async def update_checker():
 # =========================================================
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(
+    administrator=True
+)
 async def testupdate(ctx):
 
-    old_version = "1.90.1.3492"
-    new_version = "1.90.2.3504"
-    version_code = "3504"
-
     await send_update(
-        old_version=old_version,
-        new_version=new_version,
-        version_code=version_code
+        old_version="1.90.1.3492",
+        new_version="1.90.2.3504",
+        version_code="3504"
     )
 
     await ctx.send(
@@ -721,20 +783,24 @@ async def on_ready():
 
 
 # =========================================================
-# ERROR HANDLING
+# COMMAND ERRORS
 # =========================================================
 
 @bot.event
-async def on_command_error(ctx, error):
+async def on_command_error(
+    ctx,
+    error
+):
 
     if isinstance(
         error,
         commands.MissingPermissions
     ):
         await ctx.send(
-            "❌ You need administrator permissions "
-            "to use this command."
+            "❌ You need administrator "
+            "permissions to use this command."
         )
+
         return
 
     if isinstance(
@@ -756,10 +822,10 @@ if __name__ == "__main__":
 
     if not DISCORD_TOKEN:
         raise RuntimeError(
-            "DISCORD_TOKEN environment variable is missing."
+            "DISCORD_TOKEN environment variable "
+            "is missing."
         )
 
-    # Start Render web server
     web_thread = Thread(
         target=run_web,
         daemon=True
@@ -767,5 +833,6 @@ if __name__ == "__main__":
 
     web_thread.start()
 
-    # Start Discord bot
-    bot.run(DISCORD_TOKEN)
+    bot.run(
+        DISCORD_TOKEN
+    )
