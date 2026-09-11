@@ -20,11 +20,10 @@ UPDATE_ROLE_ID = 1547729517395714178
 CHECK_MINUTES = 2
 DATA_FILE = "update_data.json"
 
-# Animal Company Meta Quest App ID
 ANIMAL_COMPANY_ID = "7190422614401072"
 
-# Meta/Oculus GraphQL endpoint used by MetaMetadata
-META_GRAPHQL_URL = "https://www.meta.com/ocapi/graphql"
+# Meta GraphQL endpoint used by the maintained MetaMetadata project
+META_GRAPHQL_URL = "https://graph.oculus.com/graphql"
 
 META_STORE_URL = (
     "https://www.meta.com/experiences/"
@@ -174,103 +173,255 @@ def make_update_embed(
     return embed
 
 
+async def meta_graphql_request(session, payload):
+    """
+    Send a request to Meta's Oculus GraphQL endpoint.
+
+    The maintained MetaMetadata project uses form data with:
+    - doc_id
+    - access_token
+    - variables
+    """
+
+    async with session.post(
+        META_GRAPHQL_URL,
+        data=payload
+    ) as response:
+
+        body = await response.text()
+
+        if response.status != 200:
+            raise RuntimeError(
+                f"Meta GraphQL returned HTTP {response.status}: "
+                f"{body[:1200]}"
+            )
+
+        try:
+            return json.loads(body)
+
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                "Meta GraphQL returned non-JSON data: "
+                f"{body[:800]}"
+            )
+
+
 async def fetch_animal_company():
-    """Fetch the latest Animal Company Quest version from Meta's current OCAPI GraphQL endpoint."""
+    """
+    Fetch the latest Animal Company version.
+
+    This follows the same two-step version lookup used by
+    the maintained MetaMetadata project:
+    
+    1. Store-format request
+    2. App-details request
+    """
+
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
     }
 
-    # Current MetaMetadata query documents.
-    requests_to_try = [
-        {
+    timeout = aiohttp.ClientTimeout(
+        total=30
+    )
+
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        headers=headers
+    ) as session:
+
+        # -------------------------------------------------
+        # STEP 1
+        # Store metadata
+        # -------------------------------------------------
+
+        store_payload = {
             "doc_id": "8571881679548867",
-            "variables": {"applicationID": ANIMAL_COMPANY_ID},
-        },
-        {
-            "doc_id": "3828663700542720",
-            "variables": {"applicationID": ANIMAL_COMPANY_ID},
-        },
-    ]
+            "access_token": "OC|1076686279105243|",
+            "variables": json.dumps({
+                "applicationID": ANIMAL_COMPANY_ID
+            })
+        }
 
-    timeout = aiohttp.ClientTimeout(total=30)
-
-    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-        data = None
+        store_data = None
         last_error = None
 
-        for request_index, request in enumerate(requests_to_try, 1):
+        for attempt in range(1, 4):
+
             try:
-                payload = {
-                    "doc_id": request["doc_id"],
-                    "access_token": "OC|1076686279105243|",
-                    "variables": json.dumps(request["variables"]),
-                }
 
-                async with session.post(
-                    META_GRAPHQL_URL,
-                    data=payload
-                ) as response:
-                    body = await response.text()
+                print(
+                    f"Requesting Meta store data "
+                    f"(attempt {attempt}/3)...",
+                    flush=True
+                )
 
-                    if response.status != 200:
-                        raise RuntimeError(
-                            f"Meta OCAPI returned HTTP {response.status}: "
-                            f"{body[:1000]}"
-                        )
-
-                    try:
-                        data = json.loads(body)
-                    except json.JSONDecodeError:
-                        raise RuntimeError(
-                            f"Meta OCAPI returned non-JSON response: "
-                            f"{body[:500]}"
-                        )
-
-                if request_index == 1:
-                    # The first request is store metadata. Continue to the
-                    # app-details query to get the actual latest binary.
-                    continue
+                store_data = await meta_graphql_request(
+                    session,
+                    store_payload
+                )
 
                 break
 
             except Exception as error:
+
                 last_error = error
+
                 print(
-                    f"WARNING: Meta OCAPI request {request_index}/2 failed: "
-                    f"{error}",
+                    f"WARNING: Meta store request "
+                    f"{attempt}/3 failed: {error}",
                     flush=True
                 )
 
-        if data is None:
+                if attempt < 3:
+                    await asyncio.sleep(2)
+
+        if store_data is None:
             raise RuntimeError(
-                f"Could not get Meta version data: {last_error}"
+                f"Could not get Meta store data: {last_error}"
+            )
+
+        # Verify that Meta returned an actual app node.
+        try:
+            store_node = (
+                store_data
+                ["data"]
+                ["node"]
+            )
+
+        except (KeyError, TypeError):
+
+            raise RuntimeError(
+                "Meta store response did not contain "
+                f"an app node: {str(store_data)[:1500]}"
+            )
+
+        if store_node is None:
+            raise RuntimeError(
+                "Meta returned an empty app node."
+            )
+
+        print(
+            "Meta store request succeeded.",
+            flush=True
+        )
+
+        # -------------------------------------------------
+        # STEP 2
+        # App details / latest binary
+        # -------------------------------------------------
+
+        app_payload = {
+            "doc_id": "3828663700542720",
+            "access_token": "OC|1076686279105243|",
+            "variables": json.dumps({
+                "applicationID": ANIMAL_COMPANY_ID
+            })
+        }
+
+        app_data = None
+        last_error = None
+
+        for attempt in range(1, 4):
+
+            try:
+
+                print(
+                    f"Requesting Meta app details "
+                    f"(attempt {attempt}/3)...",
+                    flush=True
+                )
+
+                app_data = await meta_graphql_request(
+                    session,
+                    app_payload
+                )
+
+                break
+
+            except Exception as error:
+
+                last_error = error
+
+                print(
+                    f"WARNING: Meta app request "
+                    f"{attempt}/3 failed: {error}",
+                    flush=True
+                )
+
+                if attempt < 3:
+                    await asyncio.sleep(2)
+
+        if app_data is None:
+            raise RuntimeError(
+                f"Could not get Meta app details: {last_error}"
+            )
+
+        # -------------------------------------------------
+        # Extract latest supported binary
+        # -------------------------------------------------
+
+        try:
+
+            release_channels = (
+                app_data
+                ["data"]
+                ["node"]
+                ["release_channels"]
+                ["nodes"]
+            )
+
+            if not release_channels:
+                raise RuntimeError(
+                    "Meta returned no release channels."
+                )
+
+            latest_binary = (
+                release_channels[0]
+                ["latest_supported_binary"]
+            )
+
+        except (KeyError, TypeError, IndexError) as error:
+
+            raise RuntimeError(
+                "Meta app response did not contain "
+                f"release channel data: {error}; "
+                f"response={str(app_data)[:1800]}"
+            )
+
+        if latest_binary is None:
+            raise RuntimeError(
+                "Meta returned no latest supported binary."
             )
 
         try:
-            binary = (
-                data["data"]["node"]["release_channels"]["nodes"][0]
-                ["latest_supported_binary"]
-            )
-            version = binary["version"]
-            version_code = binary["version_code"]
-        except (KeyError, IndexError, TypeError) as error:
+
+            version = latest_binary["version"]
+            version_code = latest_binary["version_code"]
+
+        except (KeyError, TypeError) as error:
+
             raise RuntimeError(
-                f"Meta OCAPI response did not contain latest binary: "
-                f"{error}; response={str(data)[:1500]}"
+                "Meta binary did not contain version information: "
+                f"{error}; binary={str(latest_binary)[:1200]}"
             )
 
         if not version or version_code is None:
             raise RuntimeError(
-                f"Meta returned an empty version/build: "
+                f"Meta returned an empty version: "
                 f"{version} ({version_code})"
             )
 
         print(
-            f"Meta OCAPI source: {version} ({version_code})",
+            f"Meta version source: "
+            f"{version} ({version_code})",
             flush=True
         )
+
+        # -------------------------------------------------
+        # Artwork
+        # -------------------------------------------------
 
         image_url = None
         logo_url = None
@@ -278,13 +429,23 @@ async def fetch_animal_company():
         metadata_url = (
             "https://raw.githubusercontent.com/"
             "threethan/MetaMetadata/main/"
-            "data/common/woosterGames.animalCompany.json"
+            "data/common/"
+            "woosterGames.animalCompany.json"
         )
 
         try:
-            async with session.get(metadata_url) as metadata_response:
+
+            async with session.get(
+                metadata_url
+            ) as metadata_response:
+
                 metadata_response.raise_for_status()
-                metadata = await metadata_response.json(content_type=None)
+
+                metadata = await (
+                    metadata_response.json(
+                        content_type=None
+                    )
+                )
 
                 image_url = (
                     metadata.get("landscape")
@@ -299,8 +460,10 @@ async def fetch_animal_company():
                 )
 
         except Exception as error:
+
             print(
-                f"WARNING: Could not load artwork: {error}",
+                f"WARNING: Could not load artwork: "
+                f"{error}",
                 flush=True
             )
 
@@ -325,21 +488,26 @@ async def send_update(
     )
 
     if channel is None:
+
         print(
             "Channel not found in cache. Fetching...",
             flush=True
         )
 
         try:
+
             channel = await bot.fetch_channel(
                 UPDATE_CHANNEL_ID
             )
 
         except Exception as error:
+
             print(
-                f"ERROR: Could not find channel: {error}",
+                f"ERROR: Could not find channel: "
+                f"{error}",
                 flush=True
             )
+
             return False
 
     embed = make_update_embed(
@@ -351,7 +519,9 @@ async def send_update(
         logo_url=logo_url
     )
 
-    role_mention = f"<@&{UPDATE_ROLE_ID}>"
+    role_mention = (
+        f"<@&{UPDATE_ROLE_ID}>"
+    )
 
     await channel.send(
         content=role_mention,
@@ -371,19 +541,24 @@ async def send_update(
 
 @tasks.loop(minutes=CHECK_MINUTES)
 async def check_for_updates():
+
     print(
         "Checking for Animal Company updates...",
         flush=True
     )
 
     try:
+
         latest = await fetch_animal_company()
 
     except Exception as error:
+
         print(
-            f"ERROR: Update check failed: {error}",
+            f"ERROR: Update check failed: "
+            f"{error}",
             flush=True
         )
+
         return
 
     latest_version = latest["version"]
@@ -414,8 +589,14 @@ async def check_for_updates():
         flush=True
     )
 
+    # ---------------------------------------------
     # First startup
-    if previous_version is None or previous_code is None:
+    # ---------------------------------------------
+
+    if (
+        previous_version is None
+        or previous_code is None
+    ):
 
         data["version"] = latest_version
         data["version_code"] = latest_code
@@ -441,19 +622,29 @@ async def check_for_updates():
 
         return
 
+    # ---------------------------------------------
     # Nothing changed
+    # ---------------------------------------------
+
     if (
-        str(previous_version) == str(latest_version)
+        str(previous_version)
+        == str(latest_version)
         and
-        str(previous_code) == str(latest_code)
+        str(previous_code)
+        == str(latest_code)
     ):
+
         print(
             "No new Animal Company update.",
             flush=True
         )
+
         return
 
+    # ---------------------------------------------
     # NEW UPDATE
+    # ---------------------------------------------
+
     now = datetime.now(
         timezone.utc
     )
@@ -493,6 +684,7 @@ async def check_for_updates():
     )
 
     try:
+
         sent = await send_update(
             previous_version=previous_version,
             new_version=latest_version,
@@ -503,10 +695,13 @@ async def check_for_updates():
         )
 
     except Exception as error:
+
         print(
-            f"ERROR: Could not send update: {error}",
+            f"ERROR: Could not send update: "
+            f"{error}",
             flush=True
         )
+
         return
 
     # Only save after Discord successfully receives it.
@@ -526,6 +721,7 @@ async def check_for_updates():
 
 @check_for_updates.before_loop
 async def before_update_check():
+
     print(
         "Waiting for Discord to become ready...",
         flush=True
@@ -541,6 +737,7 @@ async def before_update_check():
 
 @bot.event
 async def on_ready():
+
     print(
         "================================",
         flush=True
@@ -569,7 +766,8 @@ async def on_ready():
     )
 
     print(
-        f"Checking every {CHECK_MINUTES} minutes.",
+        f"Checking every "
+        f"{CHECK_MINUTES} minutes.",
         flush=True
     )
 
@@ -610,12 +808,14 @@ async def testupdate(ctx):
     )
 
     try:
+
         latest = await fetch_animal_company()
 
         image_url = latest["image_url"]
         logo_url = latest["logo_url"]
 
     except Exception:
+
         image_url = None
         logo_url = None
 
@@ -628,7 +828,9 @@ async def testupdate(ctx):
         logo_url=logo_url
     )
 
-    role_mention = f"<@&{UPDATE_ROLE_ID}>"
+    role_mention = (
+        f"<@&{UPDATE_ROLE_ID}>"
+    )
 
     await ctx.send(
         content=role_mention,
@@ -638,36 +840,28 @@ async def testupdate(ctx):
         )
     )
 
-    print(
-        "Manual test update sent.",
-        flush=True
-    )
 
-
-@bot.event
-async def on_command_error(ctx, error):
+@testupdate.error
+async def testupdate_error(
+    ctx,
+    error
+):
 
     if isinstance(
         error,
         commands.MissingPermissions
     ):
-        return
 
-    if isinstance(
-        error,
-        commands.CommandNotFound
-    ):
-        return
-
-    print(
-        f"Command error: {error}",
-        flush=True
-    )
+        await ctx.send(
+            "You need Administrator permission "
+            "to use this command."
+        )
 
 
 if not TOKEN:
+
     raise RuntimeError(
-        "DISCORD_TOKEN is missing!"
+        "DISCORD_TOKEN is not set."
     )
 
 
