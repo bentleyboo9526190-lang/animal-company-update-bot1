@@ -175,21 +175,21 @@ def make_update_embed(
 
 
 async def fetch_animal_company():
-    """
-    Gets the current Animal Company Quest version directly from
-    Meta's Quest GraphQL data.
+    """Fetch the latest Animal Company Quest version from OculusDB.
 
-    MetaMetadata currently performs two GraphQL requests:
-    1. Store-format data
-    2. App-details data containing release_channels/latest_supported_binary
-
-    The old bot skipped step 1, which can cause Meta to return
-    HTTP 400 for the app-details request.
+    OculusDB maintains a database sourced from Meta's Oculus GraphQL API,
+    so the bot does not need to call Meta's currently-rejecting GraphQL
+    endpoint directly.
     """
+
+    api_url = (
+        "https://oculusdb.rui2015.me/api/v1/connected/"
+        f"{ANIMAL_COMPANY_ID}"
+    )
 
     headers = {
         "User-Agent": "AnimalCompanyUpdateBot/1.0",
-        "Accept": "application/json",
+        "Accept": "application/json"
     }
 
     timeout = aiohttp.ClientTimeout(total=30)
@@ -198,199 +198,138 @@ async def fetch_animal_company():
         timeout=timeout,
         headers=headers
     ) as session:
+        last_error = None
 
-        # ---------------------------------------------------------
-        # STEP 1: Get store-format data first.
-        # This is the sequence used by MetaMetadata.
-        # ---------------------------------------------------------
-        store_payload = {
-            "doc_id": "8571881679548867",
-            "access_token": "OC|1076686279105243|",
-            "variables": json.dumps({
-                "applicationID": ANIMAL_COMPANY_ID
-            })
-        }
-
-        store_data = None
-
-        for attempt in range(3):
+        for attempt in range(1, 4):
             try:
-                async with session.post(
-                    OCULUS_GRAPHQL_URL,
-                    data=store_payload
-                ) as response:
+                async with session.get(api_url) as response:
+                    body = await response.text()
 
-                    response_text = await response.text()
-
-                    if response.status >= 400:
+                    if response.status != 200:
                         raise RuntimeError(
-                            f"Meta store request returned HTTP "
-                            f"{response.status}: "
-                            f"{response_text[:500]}"
+                            f"OculusDB returned HTTP {response.status}: "
+                            f"{body[:500]}"
                         )
 
-                    store_data = json.loads(response_text)
-                    break
+                    data = json.loads(body)
+                break
 
             except Exception as error:
+                last_error = error
                 print(
-                    f"WARNING: Meta store request attempt "
-                    f"{attempt + 1}/3 failed: {error}",
+                    f"WARNING: OculusDB request attempt {attempt}/3 failed: "
+                    f"{error}",
                     flush=True
                 )
 
-                if attempt < 2:
+                if attempt < 3:
                     await asyncio.sleep(2)
-
-        if store_data is None:
+        else:
             raise RuntimeError(
-                "Could not get Meta store data."
+                f"Could not get OculusDB data: {last_error}"
             )
 
-        if store_data.get("data", {}).get("node") is None:
-            raise RuntimeError(
-                "Meta returned an empty store node."
+    # OculusDB v1 returns a list of version records under "versions".
+    versions = data.get("versions")
+
+    if not isinstance(versions, list) or not versions:
+        raise ValueError(
+            "OculusDB returned no versions."
+        )
+
+    # Prefer the newest downloadable build. If the API does not expose
+    # downloadable on a record, keep it as a fallback.
+    downloadable = [
+        item for item in versions
+        if isinstance(item, dict) and item.get("downloadable") is True
+    ]
+
+    candidates = downloadable or [
+        item for item in versions
+        if isinstance(item, dict)
+    ]
+
+    if not candidates:
+        raise ValueError(
+            "OculusDB returned no usable version records."
+        )
+
+    latest = candidates[0]
+
+    version = (
+        latest.get("version")
+        or latest.get("version_name")
+        or latest.get("versionName")
+    )
+
+    version_code = (
+        latest.get("version_code")
+        or latest.get("versionCode")
+        or latest.get("versioncode")
+    )
+
+    if not version:
+        raise ValueError(
+            f"OculusDB version record has no version: {latest}"
+        )
+
+    if version_code is None:
+        # Some OculusDB records expose the numeric build ID as the version
+        # code. Use it when available rather than failing the whole check.
+        version_code = latest.get("id")
+
+    if version_code is None:
+        raise ValueError(
+            f"OculusDB version record has no version code: {latest}"
+        )
+
+    print(
+        f"OculusDB source: {version} ({version_code})",
+        flush=True
+    )
+
+    # Artwork is still loaded from the public metadata file. That file's
+    # version field may be stale, but its image URLs are independent of the
+    # version lookup above.
+    image_url = None
+    logo_url = None
+
+    metadata_url = (
+        "https://raw.githubusercontent.com/"
+        "threethan/MetaMetadata/main/"
+        "data/common/woosterGames.animalCompany.json"
+    )
+
+    try:
+        async with session.get(metadata_url) as metadata_response:
+            metadata_response.raise_for_status()
+            metadata = await metadata_response.json(content_type=None)
+
+            image_url = (
+                metadata.get("landscape")
+                or metadata.get("hero")
+                or metadata.get("portrait")
+                or metadata.get("square")
             )
 
-        # ---------------------------------------------------------
-        # STEP 2: Get app details / latest supported binary.
-        # ---------------------------------------------------------
-        details_payload = {
-            "doc_id": "3828663700542720",
-            "access_token": "OC|1076686279105243|",
-            "variables": json.dumps({
-                "applicationID": ANIMAL_COMPANY_ID
-            })
-        }
-
-        details_data = None
-
-        for attempt in range(3):
-            try:
-                async with session.post(
-                    OCULUS_GRAPHQL_URL,
-                    data=details_payload
-                ) as response:
-
-                    response_text = await response.text()
-
-                    if response.status >= 400:
-                        raise RuntimeError(
-                            f"Meta details request returned HTTP "
-                            f"{response.status}: "
-                            f"{response_text[:500]}"
-                        )
-
-                    details_data = json.loads(response_text)
-                    break
-
-            except Exception as error:
-                print(
-                    f"WARNING: Meta details request attempt "
-                    f"{attempt + 1}/3 failed: {error}",
-                    flush=True
-                )
-
-                if attempt < 2:
-                    await asyncio.sleep(2)
-
-        if details_data is None:
-            raise RuntimeError(
-                "Could not get Meta app details."
+            logo_url = (
+                metadata.get("logo")
+                or metadata.get("icon")
             )
 
-        try:
-            node = details_data["data"]["node"]
-
-            channels = (
-                node["release_channels"]["nodes"]
-            )
-
-            if not channels:
-                raise ValueError(
-                    "Meta returned no release channels."
-                )
-
-            latest = channels[0][
-                "latest_supported_binary"
-            ]
-
-            if latest is None:
-                raise ValueError(
-                    "Meta returned no latest supported binary."
-                )
-
-            version = latest.get("version")
-            version_code = latest.get("version_code")
-
-            if not version:
-                raise ValueError(
-                    "Meta returned no version."
-                )
-
-            if version_code is None:
-                raise ValueError(
-                    "Meta returned no version code."
-                )
-
-        except (KeyError, TypeError, IndexError) as error:
-            raise ValueError(
-                f"Unexpected Meta response: {error}"
-            ) from error
-
+    except Exception as error:
         print(
-            f"Meta source: {version} ({version_code})",
+            f"WARNING: Could not load artwork: {error}",
             flush=True
         )
 
-        # ---------------------------------------------------------
-        # Artwork still comes from MetaMetadata.
-        # This is only for the embed images/logo.
-        # ---------------------------------------------------------
-        image_url = None
-        logo_url = None
+    return {
+        "version": str(version),
+        "version_code": version_code,
+        "image_url": image_url,
+        "logo_url": logo_url
+    }
 
-        metadata_url = (
-            "https://raw.githubusercontent.com/"
-            "threethan/MetaMetadata/main/"
-            "data/common/woosterGames.animalCompany.json"
-        )
-
-        try:
-            async with session.get(
-                metadata_url
-            ) as metadata_response:
-
-                metadata_response.raise_for_status()
-
-                metadata = await metadata_response.json(
-                    content_type=None
-                )
-
-                image_url = (
-                    metadata.get("landscape")
-                    or metadata.get("hero")
-                    or metadata.get("portrait")
-                    or metadata.get("square")
-                )
-
-                logo_url = (
-                    metadata.get("logo")
-                    or metadata.get("icon")
-                )
-
-        except Exception as error:
-            print(
-                f"WARNING: Could not load artwork: {error}",
-                flush=True
-            )
-
-        return {
-            "version": str(version),
-            "version_code": version_code,
-            "image_url": image_url,
-            "logo_url": logo_url
-        }
 
 async def send_update(
     previous_version,
