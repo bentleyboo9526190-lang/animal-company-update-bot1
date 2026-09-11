@@ -40,7 +40,7 @@ DATA_FILE = "update_data.json"
 
 
 # ============================================================
-# FLASK
+# FLASK SERVER FOR RENDER
 # ============================================================
 
 app = Flask(__name__)
@@ -53,6 +53,7 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
+
     app.run(
         host="0.0.0.0",
         port=port
@@ -60,7 +61,7 @@ def run_web_server():
 
 
 # ============================================================
-# DISCORD
+# DISCORD BOT
 # ============================================================
 
 intents = discord.Intents.default()
@@ -73,7 +74,7 @@ bot = commands.Bot(
 
 
 # ============================================================
-# SAVED DATA
+# SAVED VERSION
 # ============================================================
 
 def load_saved_data():
@@ -87,14 +88,14 @@ def load_saved_data():
             DATA_FILE,
             "r",
             encoding="utf-8"
-        ) as f:
+        ) as file:
 
-            return json.load(f)
+            return json.load(file)
 
     except Exception as e:
 
         print(
-            f"ERROR reading saved data: {e}"
+            f"ERROR loading saved data: {e}"
         )
 
         return None
@@ -105,28 +106,25 @@ def save_version(
     version_code
 ):
 
-    data = {
-        "version": str(version),
-        "version_code": int(version_code)
-    }
-
     try:
 
         with open(
             DATA_FILE,
             "w",
             encoding="utf-8"
-        ) as f:
+        ) as file:
 
             json.dump(
-                data,
-                f,
+                {
+                    "version": str(version),
+                    "version_code": int(version_code)
+                },
+                file,
                 indent=2
             )
 
         print(
-            f"Saved version: "
-            f"{version} "
+            f"Saved version: {version} "
             f"(code {version_code})"
         )
 
@@ -138,7 +136,7 @@ def save_version(
 
 
 # ============================================================
-# META GRAPHQL
+# META GRAPHQL REQUEST
 # ============================================================
 
 async def graphql_request(payload):
@@ -188,8 +186,7 @@ async def graphql_request(payload):
                 except Exception:
 
                     print(
-                        "Meta response was "
-                        "not JSON:"
+                        "Meta response was not JSON:"
                     )
 
                     print(
@@ -208,7 +205,7 @@ async def graphql_request(payload):
 
 
 # ============================================================
-# GET VERSION
+# GET CURRENT ANIMAL COMPANY VERSION
 # ============================================================
 
 async def fetch_meta_version():
@@ -217,7 +214,10 @@ async def fetch_meta_version():
         "Fetching current Animal Company version..."
     )
 
-    # First request
+    # --------------------------------------------------------
+    # STORE REQUEST
+    # --------------------------------------------------------
+
     store_payload = {
 
         "doc_id": "8571881679548867",
@@ -231,17 +231,18 @@ async def fetch_meta_version():
         })
     }
 
-    store_data = await graphql_request(
+    await graphql_request(
         store_payload
     )
 
-    if store_data is not None:
+    print(
+        "Store request finished."
+    )
 
-        print(
-            "Store request completed."
-        )
+    # --------------------------------------------------------
+    # APP DETAILS REQUEST
+    # --------------------------------------------------------
 
-    # Second request
     details_payload = {
 
         "doc_id": "3828663700542720",
@@ -279,7 +280,8 @@ async def fetch_meta_version():
         if not node:
 
             print(
-                "Meta response has no node."
+                "No application node "
+                "was returned."
             )
 
             print(
@@ -291,47 +293,45 @@ async def fetch_meta_version():
 
             return None
 
-        release_channels = (
+        channels = (
             node
             .get("release_channels", {})
             .get("nodes", [])
         )
 
-        if not release_channels:
+        if not channels:
 
             print(
-                "No release channels "
-                "were returned."
+                "No release channels returned."
             )
 
             return None
 
-        latest_binary = (
-            release_channels[0]
+        binary = (
+            channels[0]
             .get("latest_supported_binary")
         )
 
-        if not latest_binary:
+        if not binary:
 
             print(
-                "No latest supported "
-                "binary was returned."
+                "No latest binary returned."
             )
 
             return None
 
-        version = latest_binary.get(
+        version = binary.get(
             "version"
         )
 
-        version_code = latest_binary.get(
+        version_code = binary.get(
             "version_code"
         )
 
         if version is None:
 
             print(
-                "Meta returned no version."
+                "No version returned."
             )
 
             return None
@@ -339,7 +339,7 @@ async def fetch_meta_version():
         if version_code is None:
 
             print(
-                "Meta returned no version code."
+                "No version code returned."
             )
 
             return None
@@ -368,7 +368,7 @@ async def fetch_meta_version():
     except Exception as e:
 
         print(
-            f"ERROR parsing Meta data: {e}"
+            f"ERROR parsing Meta response: {e}"
         )
 
         print(
@@ -403,12 +403,9 @@ async def get_update_artwork():
             timeout=timeout
         ) as session:
 
-            async with session.get(
-                url
-            ) as response:
+            async with session.get(url) as response:
 
                 if response.status != 200:
-
                     return None
 
                 data = await response.json()
@@ -458,7 +455,7 @@ async def send_update(
 ):
 
     print(
-        "Preparing Discord update message..."
+        "Preparing update notification..."
     )
 
     channel = bot.get_channel(
@@ -468,8 +465,8 @@ async def send_update(
     if channel is None:
 
         print(
-            "Channel not cached. "
-            "Fetching channel..."
+            "Channel isn't cached. "
+            "Fetching it directly..."
         )
 
         try:
@@ -481,7 +478,7 @@ async def send_update(
         except Exception as e:
 
             print(
-                f"ERROR finding channel: {e}"
+                f"ERROR fetching channel: {e}"
             )
 
             return False
@@ -533,7 +530,7 @@ async def send_update(
     embed.add_field(
         name="🔗 Meta Store",
         value=(
-            f"[Open Animal Company page]"
+            "[Open Animal Company page]"
             f"({META_STORE_URL})"
         ),
         inline=True
@@ -564,15 +561,7 @@ async def send_update(
         )
 
         print(
-            "================================"
-        )
-
-        print(
-            "UPDATE MESSAGE SENT!"
-        )
-
-        print(
-            "================================"
+            "UPDATE NOTIFICATION SENT!"
         )
 
         return True
@@ -580,14 +569,14 @@ async def send_update(
     except Exception as e:
 
         print(
-            f"ERROR sending Discord message: {e}"
+            f"ERROR sending update: {e}"
         )
 
         return False
 
 
 # ============================================================
-# CHECK FOR UPDATES
+# CHECK FOR UPDATE
 # ============================================================
 
 async def check_for_updates():
@@ -597,7 +586,7 @@ async def check_for_updates():
     )
 
     print(
-        "Checking for Animal Company updates..."
+        "CHECKING FOR ANIMAL COMPANY UPDATE"
     )
 
     print(
@@ -624,15 +613,19 @@ async def check_for_updates():
 
     saved = load_saved_data()
 
-    # First run
+    # --------------------------------------------------------
+    # FIRST RUN
+    # --------------------------------------------------------
+
     if saved is None:
 
         print(
-            "This is the first successful check."
+            "No saved version exists."
         )
 
         print(
-            f"Saving {current_version} "
+            f"Saving current version: "
+            f"{current_version} "
             f"(code {current_code})"
         )
 
@@ -652,16 +645,21 @@ async def check_for_updates():
     )
 
     print(
-        f"Saved: {previous_version} "
+        f"Saved version: "
+        f"{previous_version} "
         f"(code {previous_code})"
     )
 
     print(
-        f"Current: {current_version} "
+        f"Current version: "
+        f"{current_version} "
         f"(code {current_code})"
     )
 
-    # No update
+    # --------------------------------------------------------
+    # NO UPDATE
+    # --------------------------------------------------------
+
     if (
         str(previous_version)
         == str(current_version)
@@ -676,22 +674,26 @@ async def check_for_updates():
 
         return
 
-    # New update
+    # --------------------------------------------------------
+    # UPDATE FOUND
+    # --------------------------------------------------------
+
     print(
         "================================"
     )
 
     print(
-        "NEW UPDATE DETECTED!"
+        "NEW ANIMAL COMPANY UPDATE!"
     )
 
     print(
-        f"{previous_version} -> "
+        f"{previous_version} "
+        f"-> "
         f"{current_version}"
     )
 
     print(
-        f"New code: {current_code}"
+        f"Version code: {current_code}"
     )
 
     print(
@@ -714,16 +716,21 @@ async def check_for_updates():
     else:
 
         print(
-            "Message failed. "
-            "Saved version was not changed."
+            "Discord message failed."
+        )
+
+        print(
+            "Keeping old saved version."
         )
 
 
 # ============================================================
-# AUTOMATIC CHECKER
+# AUTOMATIC LOOP
 # ============================================================
 
-@tasks.loop(minutes=CHECK_MINUTES)
+@tasks.loop(
+    minutes=CHECK_MINUTES
+)
 async def update_checker():
 
     try:
@@ -733,22 +740,58 @@ async def update_checker():
     except Exception as e:
 
         print(
-            f"UPDATE CHECKER ERROR: {e}"
+            f"CHECKER ERROR: {e}"
         )
 
 
-@update_checker.before_loop
-async def before_update_checker():
+# ============================================================
+# CONNECTED TO DISCORD
+# ============================================================
 
-    await bot.wait_until_ready()
+@bot.event
+async def on_connect():
 
     print(
-        "Update checker is ready."
+        "========================================"
     )
+
+    print(
+        "DISCORD GATEWAY CONNECTED!"
+    )
+
+    print(
+        "========================================"
+    )
+
+    # Start the automatic loop immediately.
+    if not update_checker.is_running():
+
+        update_checker.start()
+
+        print(
+            "AUTOMATIC UPDATE CHECKER STARTED!"
+        )
+
+    # Run an immediate check.
+    await asyncio.sleep(5)
+
+    print(
+        "RUNNING INITIAL UPDATE CHECK..."
+    )
+
+    try:
+
+        await check_for_updates()
+
+    except Exception as e:
+
+        print(
+            f"INITIAL CHECK ERROR: {e}"
+        )
 
 
 # ============================================================
-# BOT READY
+# READY
 # ============================================================
 
 @bot.event
@@ -759,45 +802,16 @@ async def on_ready():
     )
 
     print(
-        f"Logged in as {bot.user}"
+        f"LOGGED IN AS: {bot.user}"
     )
 
     print(
-        f"Bot ID: {bot.user.id}"
-    )
-
-    print(
-        "Discord connection is READY."
+        "BOT IS READY!"
     )
 
     print(
         "========================================"
     )
-
-    if not update_checker.is_running():
-
-        update_checker.start()
-
-        print(
-            "Automatic checker started."
-        )
-
-    # Immediate check instead of waiting 2 minutes
-    await asyncio.sleep(5)
-
-    print(
-        "Running initial update check..."
-    )
-
-    try:
-
-        await check_for_updates()
-
-    except Exception as e:
-
-        print(
-            f"Initial check error: {e}"
-        )
 
 
 # ============================================================
@@ -811,19 +825,19 @@ async def on_ready():
 async def testupdate(ctx):
 
     print(
-        "Test update command received."
+        "TEST UPDATE COMMAND RECEIVED."
     )
 
-    sent = await send_update(
+    success = await send_update(
         "1.90.1.3492",
         "1.90.2.3504",
         3504
     )
 
-    if sent:
+    if success:
 
         await ctx.send(
-            "✅ Test update sent."
+            "✅ Test update sent!"
         )
 
     else:
@@ -834,7 +848,7 @@ async def testupdate(ctx):
 
 
 # ============================================================
-# COMMAND ERRORS
+# COMMAND ERROR
 # ============================================================
 
 @bot.event
@@ -850,7 +864,7 @@ async def on_command_error(
 
         await ctx.send(
             "❌ You need administrator "
-            "permission to use that."
+            "permission to use that command."
         )
 
         return
@@ -863,7 +877,7 @@ async def on_command_error(
         return
 
     print(
-        f"Command error: {error}"
+        f"COMMAND ERROR: {error}"
     )
 
 
@@ -876,7 +890,7 @@ def main():
     if not TOKEN:
 
         print(
-            "ERROR: DISCORD_TOKEN is missing!"
+            "ERROR: DISCORD_TOKEN IS MISSING!"
         )
 
         return
