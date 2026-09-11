@@ -19,8 +19,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-UPDATE_CHANNEL_ID = int(os.getenv("UPDATE_CHANNEL_ID", "1547679561960132695"))
-UPDATE_ROLE_ID = int(os.getenv("UPDATE_ROLE_ID", "1547729517395714178"))
+
+UPDATE_CHANNEL_ID = int(
+    os.getenv(
+        "UPDATE_CHANNEL_ID",
+        "1547679561960132695"
+    )
+)
+
+UPDATE_ROLE_ID = int(
+    os.getenv(
+        "UPDATE_ROLE_ID",
+        "1547729517395714178"
+    )
+)
 
 APP_ID = "7190422614401072"
 
@@ -28,24 +40,46 @@ CHECK_MINUTES = 5
 
 DATA_FILE = "update_data.json"
 
-# Meta/Oculus GraphQL
-OCULUS_GRAPHQL_URL = "https://graph.oculus.com/graphql"
-META_GRAPHQL_URL = "https://www.meta.com/ocapi/graphql"
 
-OCULUS_TOKEN = "OC|1076686279105243|"
+# ============================================================
+# META / OCULUS
+# ============================================================
 
-STORE_DOC_ID = "8571881679548867"
-DETAILS_DOC_ID = "3828663700542720"
+OCULUS_GRAPHQL_URL = (
+    "https://graph.oculus.com/graphql"
+)
 
-# Fallback information source
+OCULUS_TOKEN = (
+    "OC|1076686279105243|"
+)
+
+STORE_DOC_ID = (
+    "8571881679548867"
+)
+
+DETAILS_DOC_ID = (
+    "3828663700542720"
+)
+
+
+# ============================================================
+# METADATA FALLBACK
+# ============================================================
+
 METADATA_URL = (
-    "https://raw.githubusercontent.com/threethan/MetaMetadata/main/"
+    "https://raw.githubusercontent.com/"
+    "threethan/MetaMetadata/main/"
     "data/common/woosterGames.animalCompany.json"
 )
 
+
+# ============================================================
+# META STORE
+# ============================================================
+
 META_STORE_URL = (
-    "https://www.meta.com/experiences/animal-company/"
-    "7190422614401072/"
+    "https://www.meta.com/experiences/"
+    "animal-company/7190422614401072/"
 )
 
 
@@ -58,7 +92,9 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-logger = logging.getLogger("animal-company-bot")
+logger = logging.getLogger(
+    "animal-company-bot"
+)
 
 
 # ============================================================
@@ -79,9 +115,18 @@ def health():
 
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
 
-    logger.info("Starting Flask web server on port %s", port)
+    port = int(
+        os.environ.get(
+            "PORT",
+            10000
+        )
+    )
+
+    logger.info(
+        "Starting Flask web server on port %s",
+        port
+    )
 
     app.run(
         host="0.0.0.0",
@@ -96,6 +141,7 @@ def run_web_server():
 # ============================================================
 
 intents = discord.Intents.default()
+
 intents.message_content = True
 
 bot = commands.Bot(
@@ -104,8 +150,21 @@ bot = commands.Bot(
 )
 
 
-# Prevent multiple startup checks if Discord reconnects.
 startup_check_done = False
+
+
+# ============================================================
+# IMAGE CACHE
+# ============================================================
+
+ANIMAL_COMPANY_IMAGES = {
+    "icon": None,
+    "logo": None,
+    "hero": None,
+    "landscape": None,
+    "portrait": None,
+    "square": None
+}
 
 
 # ============================================================
@@ -113,35 +172,61 @@ startup_check_done = False
 # ============================================================
 
 def load_saved_version():
-    """Load the last known version from update_data.json."""
 
     try:
+
         if not os.path.exists(DATA_FILE):
             return None
 
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
+        with open(
+            DATA_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             data = json.load(f)
 
-        version = data.get("version")
+        version = data.get(
+            "version"
+        )
 
         if version:
-            logger.info("Saved version loaded: %s", version)
+
+            logger.info(
+                "Saved version loaded: %s",
+                version
+            )
 
         return version
 
     except Exception as e:
-        logger.error("Could not read %s: %s", DATA_FILE, e)
+
+        logger.error(
+            "Could not read %s: %s",
+            DATA_FILE,
+            e
+        )
+
         return None
 
 
-def save_version(version):
-    """Save the current version."""
+def save_version(
+    version,
+    version_code=None
+):
 
     try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
+
+        with open(
+            DATA_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
             json.dump(
                 {
                     "version": version,
+                    "version_code": version_code,
                     "updated_at": datetime.now(
                         timezone.utc
                     ).isoformat()
@@ -150,10 +235,17 @@ def save_version(version):
                 indent=2
             )
 
-        logger.info("Saved version: %s", version)
+        logger.info(
+            "Saved version: %s",
+            version
+        )
 
     except Exception as e:
-        logger.error("Could not save version: %s", e)
+
+        logger.error(
+            "Could not save version: %s",
+            e
+        )
 
 
 # ============================================================
@@ -161,7 +253,6 @@ def save_version(version):
 # ============================================================
 
 def normalize_version(version):
-    """Convert a version into a comparable string."""
 
     if version is None:
         return None
@@ -169,27 +260,8 @@ def normalize_version(version):
     return str(version).strip()
 
 
-def split_version(version):
-    """
-    Split a version such as:
-
-    1.90.2.3504
-
-    into:
-
-    1.90.2.3504
-    """
-
-    version = normalize_version(version)
-
-    if not version:
-        return "Unknown"
-
-    return version
-
-
 # ============================================================
-# META GRAPHQL
+# GRAPHQL REQUEST
 # ============================================================
 
 async def graphql_request(
@@ -199,9 +271,9 @@ async def graphql_request(
     headers=None,
     timeout_seconds=20
 ):
-    """Send a GraphQL request and return JSON."""
 
     try:
+
         timeout = aiohttp.ClientTimeout(
             total=timeout_seconds
         )
@@ -221,6 +293,7 @@ async def graphql_request(
             )
 
             if response.status != 200:
+
                 logger.error(
                     "GraphQL HTTP %s response: %s",
                     response.status,
@@ -230,9 +303,11 @@ async def graphql_request(
                 return None
 
             try:
+
                 return json.loads(text)
 
             except json.JSONDecodeError:
+
                 logger.error(
                     "GraphQL returned invalid JSON: %s",
                     text[:2000]
@@ -241,6 +316,7 @@ async def graphql_request(
                 return None
 
     except asyncio.TimeoutError:
+
         logger.error(
             "GraphQL request timed out."
         )
@@ -248,6 +324,7 @@ async def graphql_request(
         return None
 
     except aiohttp.ClientError as e:
+
         logger.error(
             "GraphQL network error: %s",
             e
@@ -256,6 +333,7 @@ async def graphql_request(
         return None
 
     except Exception as e:
+
         logger.exception(
             "Unexpected GraphQL error: %s",
             e
@@ -264,12 +342,11 @@ async def graphql_request(
         return None
 
 
-async def get_meta_version():
-    """
-    Get the current Animal Company version.
+# ============================================================
+# META GRAPHQL VERSION
+# ============================================================
 
-    Uses the Oculus GraphQL API used by MetaMetadata.
-    """
+async def get_meta_version():
 
     logger.info(
         "Fetching current Animal Company version..."
@@ -287,19 +364,21 @@ async def get_meta_version():
         )
     }
 
-    # --------------------------------------------------------
-    # REQUEST 1: Store information
-    # --------------------------------------------------------
-
-    store_payload = {
-        "doc_id": STORE_DOC_ID,
-        "access_token": OCULUS_TOKEN,
-        "variables": json.dumps({
-            "applicationID": APP_ID
-        })
-    }
-
     async with aiohttp.ClientSession() as session:
+
+        # ----------------------------------------------------
+        # STORE REQUEST
+        # ----------------------------------------------------
+
+        store_payload = {
+            "doc_id": STORE_DOC_ID,
+            "access_token": OCULUS_TOKEN,
+            "variables": json.dumps(
+                {
+                    "applicationID": APP_ID
+                }
+            )
+        }
 
         logger.info(
             "Requesting Meta store information..."
@@ -313,24 +392,29 @@ async def get_meta_version():
         )
 
         if store_data is None:
-            logger.error(
-                "Could not get Meta store information."
+
+            logger.warning(
+                "Meta store request failed."
             )
+
         else:
+
             logger.info(
                 "Meta store request succeeded."
             )
 
         # ----------------------------------------------------
-        # REQUEST 2: App details / release channel
+        # DETAILS REQUEST
         # ----------------------------------------------------
 
         details_payload = {
             "doc_id": DETAILS_DOC_ID,
             "access_token": OCULUS_TOKEN,
-            "variables": json.dumps({
-                "applicationID": APP_ID
-            })
+            "variables": json.dumps(
+                {
+                    "applicationID": APP_ID
+                }
+            )
         }
 
         logger.info(
@@ -345,6 +429,7 @@ async def get_meta_version():
         )
 
         if details_data is None:
+
             logger.error(
                 "Could not get Meta application details."
             )
@@ -356,23 +441,33 @@ async def get_meta_version():
         )
 
     # --------------------------------------------------------
-    # Extract version
+    # EXTRACT VERSION
     # --------------------------------------------------------
 
     try:
-        node = details_data.get("data", {}).get("node", {})
 
-        release_channels = node.get(
-            "release_channels",
-            {}
+        node = (
+            details_data
+            .get("data", {})
+            .get("node", {})
         )
 
-        nodes = release_channels.get(
-            "nodes",
-            []
+        release_channels = (
+            node.get(
+                "release_channels",
+                {}
+            )
+        )
+
+        nodes = (
+            release_channels.get(
+                "nodes",
+                []
+            )
         )
 
         if not nodes:
+
             logger.error(
                 "Meta response contained no release channels."
             )
@@ -389,13 +484,22 @@ async def get_meta_version():
 
         latest_binary = (
             nodes[0]
-            .get("latest_supported_binary", {})
+            .get(
+                "latest_supported_binary",
+                {}
+            )
         )
 
-        version = latest_binary.get("version")
-        version_code = latest_binary.get("version_code")
+        version = latest_binary.get(
+            "version"
+        )
+
+        version_code = latest_binary.get(
+            "version_code"
+        )
 
         if not version:
+
             logger.error(
                 "Meta response did not contain a version."
             )
@@ -418,12 +522,15 @@ async def get_meta_version():
         )
 
         return {
-            "version": normalize_version(version),
+            "version": normalize_version(
+                version
+            ),
             "version_code": version_code,
             "channel": "LIVE"
         }
 
     except Exception as e:
+
         logger.exception(
             "Error extracting Meta version: %s",
             e
@@ -433,22 +540,20 @@ async def get_meta_version():
 
 
 # ============================================================
-# FALLBACK METADATA
+# METADATA FALLBACK
 # ============================================================
 
 async def get_metadata_fallback():
-    """
-    Attempt to retrieve Animal Company metadata.
-
-    This is only a fallback. The Meta GraphQL API is preferred.
-    """
 
     logger.info(
         "Trying MetaMetadata fallback..."
     )
 
     try:
-        timeout = aiohttp.ClientTimeout(total=20)
+
+        timeout = aiohttp.ClientTimeout(
+            total=20
+        )
 
         async with aiohttp.ClientSession(
             timeout=timeout
@@ -457,7 +562,8 @@ async def get_metadata_fallback():
             async with session.get(
                 METADATA_URL,
                 headers={
-                    "User-Agent": "AnimalCompanyUpdateBot/1.0"
+                    "User-Agent":
+                        "AnimalCompanyUpdateBot/1.0"
                 }
             ) as response:
 
@@ -469,6 +575,7 @@ async def get_metadata_fallback():
                 )
 
                 if response.status != 200:
+
                     logger.warning(
                         "MetaMetadata returned HTTP %s",
                         response.status
@@ -478,10 +585,39 @@ async def get_metadata_fallback():
 
                 data = json.loads(text)
 
-                version = data.get("version")
-                version_code = data.get("versioncode")
+                # ------------------------------------------------
+                # SAVE IMAGE URLS
+                # ------------------------------------------------
+
+                global ANIMAL_COMPANY_IMAGES
+
+                ANIMAL_COMPANY_IMAGES = {
+                    "icon": data.get("icon"),
+                    "logo": data.get("logo"),
+                    "hero": data.get("hero"),
+                    "landscape": data.get("landscape"),
+                    "portrait": data.get("portrait"),
+                    "square": data.get("square")
+                }
+
+                logger.info(
+                    "Animal Company artwork URLs loaded."
+                )
+
+                # ------------------------------------------------
+                # VERSION
+                # ------------------------------------------------
+
+                version = data.get(
+                    "version"
+                )
+
+                version_code = data.get(
+                    "versioncode"
+                )
 
                 if not version:
+
                     logger.warning(
                         "MetaMetadata did not contain a version."
                     )
@@ -493,13 +629,22 @@ async def get_metadata_fallback():
                     version
                 )
 
+                logger.info(
+                    "Fallback version code: %s",
+                    version_code
+                )
+
                 return {
-                    "version": normalize_version(version),
+                    "version": normalize_version(
+                        version
+                    ),
                     "version_code": version_code,
-                    "channel": "LIVE"
+                    "channel": "LIVE",
+                    "images": ANIMAL_COMPANY_IMAGES
                 }
 
     except Exception as e:
+
         logger.warning(
             "MetaMetadata fallback failed: %s",
             e
@@ -513,20 +658,37 @@ async def get_metadata_fallback():
 # ============================================================
 
 async def get_current_version():
-    """
-    Get the newest known Animal Company version.
-
-    Meta GraphQL is attempted first.
-    MetaMetadata is used only as a fallback.
-    """
 
     data = await get_meta_version()
 
     if data:
+
+        # Make sure we also have artwork.
+        if not ANIMAL_COMPANY_IMAGES.get(
+            "icon"
+        ):
+
+            fallback = (
+                await get_metadata_fallback()
+            )
+
+            if fallback:
+
+                data["images"] = (
+                    fallback.get(
+                        "images",
+                        {}
+                    )
+                )
+
         return data
 
     logger.warning(
-        "Meta GraphQL failed. Trying fallback source..."
+        "Meta GraphQL failed."
+    )
+
+    logger.warning(
+        "Trying fallback source..."
     )
 
     return await get_metadata_fallback()
@@ -537,7 +699,6 @@ async def get_current_version():
 # ============================================================
 
 async def get_update_channel():
-    """Get the configured Discord channel."""
 
     logger.info(
         "Looking for update channel: %s",
@@ -549,9 +710,14 @@ async def get_update_channel():
     )
 
     if channel:
+
         logger.info(
             "Update channel found through cache: #%s",
-            getattr(channel, "name", "unknown")
+            getattr(
+                channel,
+                "name",
+                "unknown"
+            )
         )
 
         return channel
@@ -561,6 +727,7 @@ async def get_update_channel():
     )
 
     try:
+
         channel = await bot.fetch_channel(
             UPDATE_CHANNEL_ID
         )
@@ -572,6 +739,7 @@ async def get_update_channel():
         return channel
 
     except Exception as e:
+
         logger.exception(
             "Could not fetch update channel: %s",
             e
@@ -589,12 +757,50 @@ def build_update_embed(
     new_version,
     version_code,
     released=None,
-    channel_name="LIVE"
+    channel_name="LIVE",
+    images=None
 ):
-    """Build the Animal Company update embed."""
 
     if released is None:
-        released = datetime.now(timezone.utc)
+
+        released = datetime.now(
+            timezone.utc
+        )
+
+    if images is None:
+
+        images = ANIMAL_COMPANY_IMAGES
+
+    # --------------------------------------------------------
+    # IMAGE URLS
+    # --------------------------------------------------------
+
+    icon_url = images.get(
+        "icon"
+    )
+
+    logo_url = images.get(
+        "logo"
+    )
+
+    landscape_url = images.get(
+        "landscape"
+    )
+
+    hero_url = images.get(
+        "hero"
+    )
+
+    # Use landscape first.
+    # If unavailable, use hero.
+    large_image_url = (
+        landscape_url
+        or hero_url
+    )
+
+    # --------------------------------------------------------
+    # EMBED
+    # --------------------------------------------------------
 
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
@@ -603,20 +809,27 @@ def build_update_embed(
     )
 
     # --------------------------------------------------------
-    # Author
+    # AUTHOR
     # --------------------------------------------------------
 
-    embed.set_author(
-        name="Animal Company",
-        icon_url=(
-            "https://raw.githubusercontent.com/"
-            "threethan/MetaMetadata/main/data/common/"
-            "woosterGames.animalCompany.json"
+    if logo_url or icon_url:
+
+        embed.set_author(
+            name="Animal Company",
+            icon_url=(
+                logo_url
+                or icon_url
+            )
         )
-    )
+
+    else:
+
+        embed.set_author(
+            name="Animal Company"
+        )
 
     # --------------------------------------------------------
-    # Version fields
+    # VERSION FIELDS
     # --------------------------------------------------------
 
     embed.add_field(
@@ -638,7 +851,7 @@ def build_update_embed(
     )
 
     # --------------------------------------------------------
-    # Released
+    # RELEASED
     # --------------------------------------------------------
 
     released_unix = int(
@@ -647,12 +860,14 @@ def build_update_embed(
 
     embed.add_field(
         name="🕐 Released",
-        value=f"<t:{released_unix}:F>",
+        value=(
+            f"<t:{released_unix}:F>"
+        ),
         inline=False
     )
 
     # --------------------------------------------------------
-    # Channel
+    # CHANNEL
     # --------------------------------------------------------
 
     embed.add_field(
@@ -662,29 +877,37 @@ def build_update_embed(
     )
 
     # --------------------------------------------------------
-    # Meta Store
+    # META STORE
     # --------------------------------------------------------
 
     embed.add_field(
         name="🔗 Meta Store",
         value=(
-            f"[Open Animal Company page]"
+            "[Open Animal Company page]"
             f"({META_STORE_URL})"
         ),
         inline=True
     )
 
     # --------------------------------------------------------
-    # Thumbnail
+    # THUMBNAIL
     # --------------------------------------------------------
 
-    embed.set_thumbnail(
-        url=(
-            "https://raw.githubusercontent.com/"
-            "threethan/MetaMetadata/main/data/common/"
-            "woosterGames.animalCompany.json"
+    if icon_url:
+
+        embed.set_thumbnail(
+            url=icon_url
         )
-    )
+
+    # --------------------------------------------------------
+    # LARGE ARTWORK
+    # --------------------------------------------------------
+
+    if large_image_url:
+
+        embed.set_image(
+            url=large_image_url
+        )
 
     return embed
 
@@ -694,9 +917,6 @@ def build_update_embed(
 # ============================================================
 
 async def check_for_updates():
-    """
-    Check Animal Company for a new version.
-    """
 
     logger.info(
         "=============================================="
@@ -710,11 +930,15 @@ async def check_for_updates():
         "=============================================="
     )
 
-    current_data = await get_current_version()
+    current_data = (
+        await get_current_version()
+    )
 
     if not current_data:
+
         logger.error(
-            "UPDATE CHECK FAILED: No version data received."
+            "UPDATE CHECK FAILED: "
+            "No version data received."
         )
 
         return
@@ -732,6 +956,18 @@ async def check_for_updates():
         "LIVE"
     )
 
+    images = current_data.get(
+        "images"
+    )
+
+    if images:
+
+        global ANIMAL_COMPANY_IMAGES
+
+        ANIMAL_COMPANY_IMAGES.update(
+            images
+        )
+
     logger.info(
         "Detected version: %s",
         new_version
@@ -742,32 +978,46 @@ async def check_for_updates():
         version_code
     )
 
-    old_version = load_saved_version()
+    old_version = (
+        load_saved_version()
+    )
 
     # --------------------------------------------------------
-    # First run
+    # FIRST RUN
     # --------------------------------------------------------
 
     if not old_version:
+
         logger.info(
             "No previous version saved."
         )
 
         logger.info(
-            "Saving current version without sending notification."
+            "Saving current version without "
+            "sending notification."
         )
 
-        save_version(new_version)
+        save_version(
+            new_version,
+            version_code
+        )
 
         return
 
     # --------------------------------------------------------
-    # No update
+    # NO UPDATE
     # --------------------------------------------------------
 
-    if normalize_version(old_version) == normalize_version(
-        new_version
+    if (
+        normalize_version(
+            old_version
+        )
+        ==
+        normalize_version(
+            new_version
+        )
     ):
+
         logger.info(
             "No update detected."
         )
@@ -801,9 +1051,12 @@ async def check_for_updates():
         "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     )
 
-    channel = await get_update_channel()
+    channel = (
+        await get_update_channel()
+    )
 
     if not channel:
+
         logger.error(
             "Cannot send update notification because "
             "the Discord channel could not be found."
@@ -820,12 +1073,16 @@ async def check_for_updates():
         new_version=new_version,
         version_code=version_code,
         released=released,
-        channel_name=channel_name
+        channel_name=channel_name,
+        images=ANIMAL_COMPANY_IMAGES
     )
 
-    role_mention = f"<@&{UPDATE_ROLE_ID}>"
+    role_mention = (
+        f"<@&{UPDATE_ROLE_ID}>"
+    )
 
     try:
+
         await channel.send(
             content=role_mention,
             embed=embed,
@@ -838,20 +1095,28 @@ async def check_for_updates():
             "UPDATE NOTIFICATION SENT SUCCESSFULLY!"
         )
 
-        save_version(new_version)
+        save_version(
+            new_version,
+            version_code
+        )
 
     except discord.Forbidden:
+
         logger.error(
-            "Discord denied permission to send the message."
+            "Discord denied permission "
+            "to send the message."
         )
 
     except discord.HTTPException as e:
+
         logger.error(
-            "Discord HTTP error while sending update: %s",
+            "Discord HTTP error while "
+            "sending update: %s",
             e
         )
 
     except Exception as e:
+
         logger.exception(
             "Unexpected error sending update: %s",
             e
@@ -862,18 +1127,21 @@ async def check_for_updates():
 # AUTOMATIC CHECKER
 # ============================================================
 
-@tasks.loop(minutes=CHECK_MINUTES)
+@tasks.loop(
+    minutes=CHECK_MINUTES
+)
 async def update_checker():
-    """Run the update check periodically."""
 
     logger.info(
         "Automatic update checker tick."
     )
 
     try:
+
         await check_for_updates()
 
     except Exception as e:
+
         logger.exception(
             "Automatic update checker error: %s",
             e
@@ -882,10 +1150,10 @@ async def update_checker():
 
 @update_checker.before_loop
 async def before_update_checker():
-    """Wait for Discord before the loop begins."""
 
     logger.info(
-        "Update checker waiting for Discord connection..."
+        "Update checker waiting for Discord "
+        "connection..."
     )
 
     await bot.wait_until_ready()
@@ -901,11 +1169,6 @@ async def before_update_checker():
 
 @bot.event
 async def on_connect():
-    """
-    Discord gateway connection event.
-
-    This is mainly for diagnostics.
-    """
 
     global startup_check_done
 
@@ -934,17 +1197,19 @@ async def on_connect():
         )
 
     else:
+
         logger.info(
-            "Automatic update checker is already running."
+            "Automatic update checker "
+            "is already running."
         )
 
-    # Only perform the immediate startup check once.
     if not startup_check_done:
 
         startup_check_done = True
 
         logger.info(
-            "Waiting 5 seconds before initial update check..."
+            "Waiting 5 seconds before "
+            "initial update check..."
         )
 
         await asyncio.sleep(5)
@@ -954,9 +1219,11 @@ async def on_connect():
         )
 
         try:
+
             await check_for_updates()
 
         except Exception as e:
+
             logger.exception(
                 "INITIAL UPDATE CHECK FAILED: %s",
                 e
@@ -985,7 +1252,9 @@ async def on_ready():
 
     logger.info(
         "Bot ID: %s",
-        bot.user.id if bot.user else "unknown"
+        bot.user.id
+        if bot.user
+        else "unknown"
     )
 
     logger.info(
@@ -1013,32 +1282,40 @@ async def on_resumed():
 # TEST COMMAND
 # ============================================================
 
-@bot.command(name="testupdate")
+@bot.command(
+    name="testupdate"
+)
 async def test_update(ctx):
-    """
-    Test the update notification embed.
-
-    Usage:
-    !testupdate
-    """
 
     logger.info(
         "Test update command requested by %s",
         ctx.author
     )
 
+    # Get artwork if it hasn't been loaded yet.
+    if not ANIMAL_COMPANY_IMAGES.get(
+        "icon"
+    ):
+
+        await get_metadata_fallback()
+
     embed = build_update_embed(
         old_version="1.90.1.3492",
         new_version="1.90.2.3504",
         version_code="3504",
-        released=datetime.now(timezone.utc),
-        channel_name="LIVE"
+        released=datetime.now(
+            timezone.utc
+        ),
+        channel_name="LIVE",
+        images=ANIMAL_COMPANY_IMAGES
     )
 
     try:
 
         await ctx.send(
-            content=f"<@&{UPDATE_ROLE_ID}>",
+            content=(
+                f"<@&{UPDATE_ROLE_ID}>"
+            ),
             embed=embed,
             allowed_mentions=discord.AllowedMentions(
                 roles=True
@@ -1062,12 +1339,16 @@ async def test_update(ctx):
 # ============================================================
 
 @bot.event
-async def on_command_error(ctx, error):
+async def on_command_error(
+    ctx,
+    error
+):
 
     if isinstance(
         error,
         commands.CommandNotFound
     ):
+
         return
 
     logger.error(
@@ -1077,7 +1358,7 @@ async def on_command_error(ctx, error):
 
 
 # ============================================================
-# MAIN
+# MAIN BOT
 # ============================================================
 
 async def run_bot():
@@ -1093,7 +1374,8 @@ async def run_bot():
         )
 
         logger.error(
-            "Add DISCORD_TOKEN to the Render environment variables."
+            "Add DISCORD_TOKEN to the Render "
+            "environment variables."
         )
 
         logger.error(
@@ -1115,7 +1397,8 @@ async def run_bot():
     except discord.LoginFailure:
 
         logger.error(
-            "Discord login failed. Check the bot token."
+            "Discord login failed. "
+            "Check the bot token."
         )
 
     except Exception as e:
@@ -1125,6 +1408,10 @@ async def run_bot():
             e
         )
 
+
+# ============================================================
+# PROGRAM ENTRY
+# ============================================================
 
 def main():
 
@@ -1141,7 +1428,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Start Flask
+    # START FLASK
     # --------------------------------------------------------
 
     web_thread = threading.Thread(
@@ -1156,7 +1443,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Start Discord
+    # START DISCORD
     # --------------------------------------------------------
 
     logger.info(
@@ -1169,8 +1456,9 @@ def main():
 
 
 # ============================================================
-# START PROGRAM
+# START
 # ============================================================
 
 if __name__ == "__main__":
+
     main()
