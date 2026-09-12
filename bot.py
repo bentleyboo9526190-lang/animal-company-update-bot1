@@ -27,7 +27,11 @@ UPDATE_ROLE_ID = int(
     os.getenv("UPDATE_ROLE_ID", "1547729517395714178")
 )
 
-ANIMAL_COMPANY_APP_ID = "7190422614401072"
+# Helper channel
+HELPER_CHANNEL_ID = 1546998948844281946
+
+# Your Render Web Service
+RENDER_URL = "https://animal-company-update-bot1.onrender.com/"
 
 QUEST_STORE_DB_URL = (
     "https://queststoredb.com/game/"
@@ -111,11 +115,103 @@ def save_state(version, version_code):
 
 
 # ============================================================
+# RENDER KEEP-ALIVE
+# ============================================================
+
+async def ping_render():
+    try:
+        timeout = aiohttp.ClientTimeout(total=15)
+
+        async with aiohttp.ClientSession() as session:
+
+            async with session.get(
+                RENDER_URL,
+                timeout=timeout
+            ) as response:
+
+                log.info(
+                    f"Keep-alive ping: HTTP {response.status}"
+                )
+
+    except Exception as e:
+        log.warning(
+            f"Keep-alive ping failed: {e}"
+        )
+
+
+@tasks.loop(minutes=10)
+async def render_keep_alive():
+    await ping_render()
+
+
+@render_keep_alive.before_loop
+async def before_render_keep_alive():
+    await bot.wait_until_ready()
+
+
+# ============================================================
+# HELPER MESSAGE
+# ============================================================
+
+async def send_helper_message():
+
+    channel = bot.get_channel(
+        HELPER_CHANNEL_ID
+    )
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(
+                HELPER_CHANNEL_ID
+            )
+
+        except Exception as e:
+            log.warning(
+                f"Could not find helper channel: {e}"
+            )
+            return
+
+    # Check recent messages so the bot doesn't spam the channel
+    try:
+        async for message in channel.history(limit=20):
+
+            if (
+                message.author == bot.user
+                and "I am larplyboovr's helper" in message.content
+            ):
+                log.info(
+                    "Helper message already exists."
+                )
+                return
+
+    except Exception as e:
+        log.warning(
+            f"Could not check helper channel history: {e}"
+        )
+
+    try:
+        await channel.send(
+            "🤖 **I am larplyboovr's helper!**\n"
+            "🟢 I'm online and ready to help."
+        )
+
+        log.info(
+            "Helper message sent."
+        )
+
+    except Exception as e:
+        log.warning(
+            f"Could not send helper message: {e}"
+        )
+
+
+# ============================================================
 # QUEST STORE DB
 # ============================================================
 
 
 async def get_queststoredb_version():
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -127,6 +223,7 @@ async def get_queststoredb_version():
     }
 
     try:
+
         timeout = aiohttp.ClientTimeout(total=20)
 
         async with aiohttp.ClientSession(
@@ -151,15 +248,8 @@ async def get_queststoredb_version():
                     )
                     return None
 
-                # ------------------------------------------------
-                # Find the app version.
-                #
-                # Quest Store DB currently renders:
-                #
-                # app version | 1.90.0.3474
-                # ------------------------------------------------
-
                 patterns = [
+
                     r"app version\s*</[^>]+>\s*"
                     r"(?:<[^>]+>\s*)?"
                     r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
@@ -174,6 +264,7 @@ async def get_queststoredb_version():
                 version = None
 
                 for pattern in patterns:
+
                     match = re.search(
                         pattern,
                         text,
@@ -184,23 +275,21 @@ async def get_queststoredb_version():
                         version = match.group(1)
                         break
 
-                # ------------------------------------------------
-                # More general fallback.
-                # ------------------------------------------------
-
                 if not version:
+
                     versions = re.findall(
                         r"\b\d+\.\d+\.\d+\.\d+\b",
                         text
                     )
 
                     if versions:
-                        # Prefer versions close to "app version".
+
                         position = text.lower().find(
                             "app version"
                         )
 
                         if position >= 0:
+
                             nearby = text[
                                 max(0, position - 100):
                                 position + 500
@@ -218,17 +307,18 @@ async def get_queststoredb_version():
                             version = versions[0]
 
                 if not version:
+
                     log.warning(
                         "Quest Store DB page did not contain "
                         "a recognizable app version."
                     )
+
                     return None
 
                 log.info(
                     f"Quest Store DB version: {version}"
                 )
 
-                # The version-code portion is the final number.
                 version_code = version.split(".")[-1]
 
                 log.info(
@@ -242,6 +332,7 @@ async def get_queststoredb_version():
                 }
 
     except Exception as e:
+
         log.warning(
             f"Quest Store DB request failed: {e}"
         )
@@ -251,13 +342,11 @@ async def get_queststoredb_version():
 
 # ============================================================
 # METAMETADATA
-#
-# Used ONLY for artwork so your existing embed stays the same.
-# It is NOT used for version detection anymore.
 # ============================================================
 
 
 async def get_metametadata():
+
     url = (
         "https://raw.githubusercontent.com/"
         "threethan/MetaMetadata/main/data/common/"
@@ -265,6 +354,7 @@ async def get_metametadata():
     )
 
     try:
+
         async with aiohttp.ClientSession() as session:
 
             async with session.get(
@@ -286,15 +376,19 @@ async def get_metametadata():
                     return json.loads(text)
 
                 except json.JSONDecodeError:
+
                     log.warning(
                         "MetaMetadata returned invalid JSON."
                     )
+
                     return {}
 
     except Exception as e:
+
         log.warning(
             f"MetaMetadata request failed: {e}"
         )
+
         return {}
 
 
@@ -305,13 +399,11 @@ async def get_metametadata():
 
 async def get_current_app_info():
 
-    # Version comes from Quest Store DB.
     version_info = await get_queststoredb_version()
 
     if not version_info:
         return None
 
-    # Artwork comes from MetaMetadata.
     metadata = await get_metametadata()
 
     return {
@@ -356,23 +448,18 @@ def build_update_embed(
         or metadata.get("square")
     )
 
-    # --------------------------------------------------------
-    # Author
-    # --------------------------------------------------------
-
     if logo:
+
         embed.set_author(
             name="Animal Company",
             icon_url=logo
         )
+
     else:
+
         embed.set_author(
             name="Animal Company"
         )
-
-    # --------------------------------------------------------
-    # Version row
-    # --------------------------------------------------------
 
     embed.add_field(
         name="⬅️ Previous Version",
@@ -392,10 +479,6 @@ def build_update_embed(
         inline=True
     )
 
-    # --------------------------------------------------------
-    # Released
-    # --------------------------------------------------------
-
     embed.add_field(
         name="🕐 Released",
         value=(
@@ -403,10 +486,6 @@ def build_update_embed(
         ),
         inline=False
     )
-
-    # --------------------------------------------------------
-    # Channel + Store
-    # --------------------------------------------------------
 
     embed.add_field(
         name="📡 Channel",
@@ -422,10 +501,6 @@ def build_update_embed(
         ),
         inline=True
     )
-
-    # --------------------------------------------------------
-    # Images
-    # --------------------------------------------------------
 
     if thumbnail:
         embed.set_thumbnail(
@@ -457,15 +532,18 @@ async def send_update(
     )
 
     if channel is None:
+
         try:
             channel = await bot.fetch_channel(
                 UPDATE_CHANNEL_ID
             )
 
         except Exception as e:
+
             log.error(
                 f"Could not find update channel: {e}"
             )
+
             return
 
     embed = build_update_embed(
@@ -507,12 +585,15 @@ async def update_checker():
     info = await get_current_app_info()
 
     if not info:
+
         log.warning(
             "Could not determine current version."
         )
+
         return
 
     new_version = info["version"]
+
     new_version_code = str(
         info["version_code"]
     )
@@ -520,10 +601,6 @@ async def update_checker():
     metadata = info["metadata"]
 
     saved = load_state()
-
-    # --------------------------------------------------------
-    # First run
-    # --------------------------------------------------------
 
     if not saved:
 
@@ -549,10 +626,6 @@ async def update_checker():
         saved.get("version_code", "")
     )
 
-    # --------------------------------------------------------
-    # No update
-    # --------------------------------------------------------
-
     if (
         old_version == new_version
         and old_version_code == new_version_code
@@ -565,10 +638,6 @@ async def update_checker():
         )
 
         return
-
-    # --------------------------------------------------------
-    # Update detected
-    # --------------------------------------------------------
 
     log.info(
         f"UPDATE FOUND: "
@@ -673,6 +742,17 @@ async def on_ready():
             "(every 20 seconds)."
         )
 
+    if not render_keep_alive.is_running():
+
+        render_keep_alive.start()
+
+        log.info(
+            "Render keep-alive started "
+            "(every 10 minutes)."
+        )
+
+    await send_helper_message()
+
 
 # ============================================================
 # START
@@ -682,6 +762,7 @@ async def on_ready():
 if __name__ == "__main__":
 
     if not DISCORD_TOKEN:
+
         raise RuntimeError(
             "DISCORD_TOKEN environment variable is missing."
         )
