@@ -30,20 +30,46 @@ UPDATE_ROLE_ID = int(
 # Helper channel
 HELPER_CHANNEL_ID = 1546998948844281946
 
-# Your Render Web Service
+# Render Web Service
 RENDER_URL = "https://animal-company-update-bot1.onrender.com/"
 
+# Animal Company app
+ANIMAL_COMPANY_APP_ID = "7190422614401072"
+
+# Quest Store DB
 QUEST_STORE_DB_URL = (
     "https://queststoredb.com/game/"
     "animal-company-7190422614401072/"
 )
 
+# Meta Store
 META_STORE_URL = (
     "https://www.meta.com/experiences/"
     "animal-company/7190422614401072/"
 )
 
+# Saved state
 STATE_FILE = "update_data.json"
+
+# ============================================================
+# IMPORTANT VERSION SAFETY
+# ============================================================
+#
+# This is the newest version we already know is legitimate.
+#
+# The bot will NEVER move backwards below this version.
+#
+# This prevents bad/stale source data such as:
+#
+# 1.57.1.2243
+#
+# from replacing:
+#
+# 1.91.0.3549
+#
+# ============================================================
+
+KNOWN_GOOD_VERSION = "1.91.0.3549"
 
 # ============================================================
 # LOGGING
@@ -70,7 +96,11 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
 
 
 # ============================================================
@@ -86,41 +116,117 @@ bot = commands.Bot(
 )
 
 # ============================================================
+# VERSION COMPARISON
+# ============================================================
+
+
+def version_tuple(version):
+    """
+    Turns:
+
+        1.91.0.3549
+
+    into:
+
+        (1, 91, 0, 3549)
+
+    This lets us correctly determine which version
+    is newer.
+    """
+
+    try:
+
+        parts = version.split(".")
+
+        return tuple(
+            int(part)
+            for part in parts
+        )
+
+    except Exception:
+
+        return (0, 0, 0, 0)
+
+
+def is_newer_version(new_version, old_version):
+    """
+    Returns True ONLY when new_version is actually
+    newer than old_version.
+    """
+
+    return (
+        version_tuple(new_version)
+        > version_tuple(old_version)
+    )
+
+
+# ============================================================
 # STATE
 # ============================================================
 
 
 def load_state():
+
     if not os.path.exists(STATE_FILE):
         return None
 
     try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+
+        with open(
+            STATE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             return json.load(f)
 
     except Exception as e:
-        log.warning(f"Could not read {STATE_FILE}: {e}")
+
+        log.warning(
+            f"Could not read {STATE_FILE}: {e}"
+        )
+
         return None
 
 
-def save_state(version, version_code):
+def save_state(
+    version,
+    version_code
+):
+
     data = {
         "version": version,
         "version_code": str(version_code),
-        "saved_at": datetime.now(timezone.utc).isoformat()
+        "saved_at": datetime.now(
+            timezone.utc
+        ).isoformat()
     }
 
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    with open(
+        STATE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            data,
+            f,
+            indent=2
+        )
 
 
 # ============================================================
 # RENDER KEEP-ALIVE
 # ============================================================
 
+
 async def ping_render():
+
     try:
-        timeout = aiohttp.ClientTimeout(total=15)
+
+        timeout = aiohttp.ClientTimeout(
+            total=15
+        )
 
         async with aiohttp.ClientSession() as session:
 
@@ -130,10 +236,12 @@ async def ping_render():
             ) as response:
 
                 log.info(
-                    f"Keep-alive ping: HTTP {response.status}"
+                    f"Keep-alive ping: "
+                    f"HTTP {response.status}"
                 )
 
     except Exception as e:
+
         log.warning(
             f"Keep-alive ping failed: {e}"
         )
@@ -141,17 +249,20 @@ async def ping_render():
 
 @tasks.loop(minutes=10)
 async def render_keep_alive():
+
     await ping_render()
 
 
 @render_keep_alive.before_loop
 async def before_render_keep_alive():
+
     await bot.wait_until_ready()
 
 
 # ============================================================
 # HELPER MESSAGE
 # ============================================================
+
 
 async def send_helper_message():
 
@@ -160,36 +271,49 @@ async def send_helper_message():
     )
 
     if channel is None:
+
         try:
+
             channel = await bot.fetch_channel(
                 HELPER_CHANNEL_ID
             )
 
         except Exception as e:
+
             log.warning(
                 f"Could not find helper channel: {e}"
             )
+
             return
 
-    # Check recent messages so the bot doesn't spam the channel
+    # Check recent messages so we don't spam
     try:
-        async for message in channel.history(limit=20):
+
+        async for message in channel.history(
+            limit=20
+        ):
 
             if (
                 message.author == bot.user
-                and "I am larplyboovr's helper" in message.content
+                and
+                "I am larplyboovr's helper"
+                in message.content
             ):
+
                 log.info(
                     "Helper message already exists."
                 )
+
                 return
 
     except Exception as e:
+
         log.warning(
             f"Could not check helper channel history: {e}"
         )
 
     try:
+
         await channel.send(
             "🤖 **I am larplyboovr's helper!**\n"
             "🟢 I'm online and ready to help."
@@ -200,6 +324,7 @@ async def send_helper_message():
         )
 
     except Exception as e:
+
         log.warning(
             f"Could not send helper message: {e}"
         )
@@ -219,12 +344,17 @@ async def get_queststoredb_version():
             "(KHTML, like Gecko) "
             "Chrome/151.0.0.0 Safari/537.36"
         ),
-        "Accept": "text/html,application/xhtml+xml",
+        "Accept": (
+            "text/html,"
+            "application/xhtml+xml"
+        ),
     }
 
     try:
 
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(
+            total=20
+        )
 
         async with aiohttp.ClientSession(
             headers=headers
@@ -238,15 +368,22 @@ async def get_queststoredb_version():
                 text = await response.text()
 
                 log.info(
-                    f"Quest Store DB request: HTTP {response.status}"
+                    f"Quest Store DB request: "
+                    f"HTTP {response.status}"
                 )
 
                 if response.status != 200:
+
                     log.warning(
-                        f"Quest Store DB returned HTTP "
-                        f"{response.status}"
+                        f"Quest Store DB returned "
+                        f"HTTP {response.status}"
                     )
+
                     return None
+
+                # ------------------------------------------------
+                # Look for app version.
+                # ------------------------------------------------
 
                 patterns = [
 
@@ -272,8 +409,14 @@ async def get_queststoredb_version():
                     )
 
                     if match:
+
                         version = match.group(1)
+
                         break
+
+                # ------------------------------------------------
+                # General fallback.
+                # ------------------------------------------------
 
                 if not version:
 
@@ -291,7 +434,10 @@ async def get_queststoredb_version():
                         if position >= 0:
 
                             nearby = text[
-                                max(0, position - 100):
+                                max(
+                                    0,
+                                    position - 100
+                                ):
                                 position + 500
                             ]
 
@@ -301,25 +447,32 @@ async def get_queststoredb_version():
                             )
 
                             if nearby_versions:
-                                version = nearby_versions[0]
+
+                                version = (
+                                    nearby_versions[0]
+                                )
 
                         if not version:
+
                             version = versions[0]
 
                 if not version:
 
                     log.warning(
-                        "Quest Store DB page did not contain "
-                        "a recognizable app version."
+                        "Quest Store DB page did not "
+                        "contain a recognizable app version."
                     )
 
                     return None
 
-                log.info(
-                    f"Quest Store DB version: {version}"
+                version_code = (
+                    version.split(".")[-1]
                 )
 
-                version_code = version.split(".")[-1]
+                log.info(
+                    f"Quest Store DB version: "
+                    f"{version}"
+                )
 
                 log.info(
                     f"Quest Store DB version code: "
@@ -342,6 +495,9 @@ async def get_queststoredb_version():
 
 # ============================================================
 # METAMETADATA
+#
+# Artwork only.
+# NOT used for version detection.
 # ============================================================
 
 
@@ -359,7 +515,9 @@ async def get_metametadata():
 
             async with session.get(
                 url,
-                timeout=aiohttp.ClientTimeout(total=20)
+                timeout=aiohttp.ClientTimeout(
+                    total=20
+                )
             ) as response:
 
                 text = await response.text()
@@ -370,9 +528,11 @@ async def get_metametadata():
                 )
 
                 if response.status != 200:
+
                     return {}
 
                 try:
+
                     return json.loads(text)
 
                 except json.JSONDecodeError:
@@ -399,12 +559,17 @@ async def get_metametadata():
 
 async def get_current_app_info():
 
-    version_info = await get_queststoredb_version()
+    version_info = (
+        await get_queststoredb_version()
+    )
 
     if not version_info:
+
         return None
 
-    metadata = await get_metametadata()
+    metadata = (
+        await get_metametadata()
+    )
 
     return {
         "version": version_info["version"],
@@ -428,7 +593,9 @@ def build_update_embed(
     embed = discord.Embed(
         title="📦 New Animal Company Update!",
         color=discord.Color.blurple(),
-        timestamp=datetime.now(timezone.utc)
+        timestamp=datetime.now(
+            timezone.utc
+        )
     )
 
     logo = (
@@ -448,6 +615,10 @@ def build_update_embed(
         or metadata.get("square")
     )
 
+    # --------------------------------------------------------
+    # Author
+    # --------------------------------------------------------
+
     if logo:
 
         embed.set_author(
@@ -460,6 +631,10 @@ def build_update_embed(
         embed.set_author(
             name="Animal Company"
         )
+
+    # --------------------------------------------------------
+    # Versions
+    # --------------------------------------------------------
 
     embed.add_field(
         name="⬅️ Previous Version",
@@ -479,6 +654,10 @@ def build_update_embed(
         inline=True
     )
 
+    # --------------------------------------------------------
+    # Released
+    # --------------------------------------------------------
+
     embed.add_field(
         name="🕐 Released",
         value=(
@@ -487,11 +666,19 @@ def build_update_embed(
         inline=False
     )
 
+    # --------------------------------------------------------
+    # Channel
+    # --------------------------------------------------------
+
     embed.add_field(
         name="📡 Channel",
         value="`LIVE`",
         inline=True
     )
+
+    # --------------------------------------------------------
+    # Meta Store
+    # --------------------------------------------------------
 
     embed.add_field(
         name="🔗 Meta Store",
@@ -502,12 +689,18 @@ def build_update_embed(
         inline=True
     )
 
+    # --------------------------------------------------------
+    # Images
+    # --------------------------------------------------------
+
     if thumbnail:
+
         embed.set_thumbnail(
             url=thumbnail
         )
 
     if artwork:
+
         embed.set_image(
             url=artwork
         )
@@ -534,6 +727,7 @@ async def send_update(
     if channel is None:
 
         try:
+
             channel = await bot.fetch_channel(
                 UPDATE_CHANNEL_ID
             )
@@ -553,7 +747,9 @@ async def send_update(
         metadata
     )
 
-    role_ping = f"<@&{UPDATE_ROLE_ID}>"
+    role_ping = (
+        f"<@&{UPDATE_ROLE_ID}>"
+    )
 
     await channel.send(
         content=role_ping,
@@ -582,7 +778,9 @@ async def update_checker():
         "Checking Animal Company version..."
     )
 
-    info = await get_current_app_info()
+    info = (
+        await get_current_app_info()
+    )
 
     if not info:
 
@@ -592,70 +790,221 @@ async def update_checker():
 
         return
 
-    new_version = info["version"]
+    detected_version = str(
+        info["version"]
+    )
 
-    new_version_code = str(
+    detected_version_code = str(
         info["version_code"]
     )
 
     metadata = info["metadata"]
 
+    log.info(
+        f"Detected version: "
+        f"{detected_version} "
+        f"({detected_version_code})"
+    )
+
+    # ========================================================
+    # LOAD SAVED VERSION
+    # ========================================================
+
     saved = load_state()
+
+    # ========================================================
+    # FIRST RUN
+    # ========================================================
 
     if not saved:
 
+        # If the source is somehow older than our known-good
+        # version, save the known-good version instead.
+        if not is_newer_version(
+            detected_version,
+            KNOWN_GOOD_VERSION
+        ):
+
+            log.info(
+                f"First run detected stale/older source "
+                f"version {detected_version}."
+            )
+
+            log.info(
+                f"Using known-good version "
+                f"{KNOWN_GOOD_VERSION} "
+                f"instead."
+            )
+
+            save_state(
+                KNOWN_GOOD_VERSION,
+                KNOWN_GOOD_VERSION.split(".")[-1]
+            )
+
+            return
+
         log.info(
             f"No previous saved version. "
-            f"Saving {new_version} "
-            f"({new_version_code}) "
+            f"Saving {detected_version} "
+            f"({detected_version_code}) "
             f"without notification."
         )
 
         save_state(
-            new_version,
-            new_version_code
+            detected_version,
+            detected_version_code
         )
 
         return
 
-    old_version = str(
-        saved.get("version", "")
+    # ========================================================
+    # GET SAVED VERSION
+    # ========================================================
+
+    saved_version = str(
+        saved.get(
+            "version",
+            ""
+        )
     )
 
-    old_version_code = str(
-        saved.get("version_code", "")
+    saved_version_code = str(
+        saved.get(
+            "version_code",
+            ""
+        )
     )
+
+    log.info(
+        f"Saved version: "
+        f"{saved_version} "
+        f"({saved_version_code})"
+    )
+
+    # ========================================================
+    # REPAIR OLD/BROKEN STATE
+    # ========================================================
+    #
+    # If the previous bug saved 1.57.1.2243, repair it
+    # without sending another notification.
+    #
+    # ========================================================
+
+    if is_newer_version(
+        KNOWN_GOOD_VERSION,
+        saved_version
+    ):
+
+        log.warning(
+            f"Saved version {saved_version} "
+            f"is below known-good version "
+            f"{KNOWN_GOOD_VERSION}."
+        )
+
+        log.info(
+            f"Repairing saved state to "
+            f"{KNOWN_GOOD_VERSION} "
+            f"without notification."
+        )
+
+        save_state(
+            KNOWN_GOOD_VERSION,
+            KNOWN_GOOD_VERSION.split(".")[-1]
+        )
+
+        saved_version = (
+            KNOWN_GOOD_VERSION
+        )
+
+        saved_version_code = (
+            KNOWN_GOOD_VERSION.split(".")[-1]
+        )
+
+    # ========================================================
+    # SAME VERSION
+    # ========================================================
 
     if (
-        old_version == new_version
-        and old_version_code == new_version_code
+        detected_version
+        == saved_version
     ):
 
         log.info(
             f"No update. Current version: "
-            f"{new_version} "
-            f"({new_version_code})"
+            f"{saved_version} "
+            f"({saved_version_code})"
         )
 
         return
 
+    # ========================================================
+    # SOURCE IS OLDER
+    # ========================================================
+    #
+    # THIS IS THE IMPORTANT FIX.
+    #
+    # If Quest Store DB temporarily reports:
+    #
+    # 1.57.1.2243
+    #
+    # while our saved version is:
+    #
+    # 1.91.0.3549
+    #
+    # we DO NOT send anything.
+    #
+    # ========================================================
+
+    if not is_newer_version(
+        detected_version,
+        saved_version
+    ):
+
+        log.warning(
+            f"Ignoring older/stale version: "
+            f"{detected_version} "
+            f"(saved: {saved_version})"
+        )
+
+        return
+
+    # ========================================================
+    # NEWER VERSION FOUND
+    # ========================================================
+
     log.info(
-        f"UPDATE FOUND: "
-        f"{old_version} ({old_version_code}) "
+        f"NEWER VERSION FOUND: "
+        f"{saved_version} "
+        f"({saved_version_code}) "
         f"-> "
-        f"{new_version} ({new_version_code})"
+        f"{detected_version} "
+        f"({detected_version_code})"
     )
 
+    # --------------------------------------------------------
+    # Send notification
+    # --------------------------------------------------------
+
     await send_update(
-        old_version,
-        new_version,
-        new_version_code,
+        saved_version,
+        detected_version,
+        detected_version_code,
         metadata
     )
 
+    # --------------------------------------------------------
+    # Save the new version
+    # --------------------------------------------------------
+
     save_state(
-        new_version,
-        new_version_code
+        detected_version,
+        detected_version_code
+    )
+
+    log.info(
+        f"Saved new version: "
+        f"{detected_version} "
+        f"({detected_version_code})"
     )
 
 
@@ -671,15 +1020,19 @@ async def before_update_checker():
 
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(
+    administrator=True
+)
 async def testupdate(ctx):
 
-    metadata = await get_metametadata()
+    metadata = (
+        await get_metametadata()
+    )
 
     await send_update(
-        "1.90.1.3492",
         "1.90.2.3504",
-        "3504",
+        "1.91.0.3549",
+        "3549",
         metadata
     )
 
@@ -694,19 +1047,24 @@ async def testupdate(ctx):
 
 
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(
+    administrator=True
+)
 async def checkversion(ctx):
 
     await ctx.send(
         "🔎 Checking Quest Store DB..."
     )
 
-    info = await get_current_app_info()
+    info = (
+        await get_current_app_info()
+    )
 
     if not info:
 
         await ctx.send(
-            "❌ Quest Store DB did not return a version."
+            "❌ Quest Store DB did not return "
+            "a version."
         )
 
         return
@@ -714,6 +1072,35 @@ async def checkversion(ctx):
     await ctx.send(
         f"📦 Version: `{info['version']}`\n"
         f"🔢 Version Code: `{info['version_code']}`"
+    )
+
+
+# ============================================================
+# DEBUG STATE COMMAND
+# ============================================================
+
+
+@bot.command()
+@commands.has_permissions(
+    administrator=True
+)
+async def checkstate(ctx):
+
+    saved = load_state()
+
+    if not saved:
+
+        await ctx.send(
+            "📁 No saved version."
+        )
+
+        return
+
+    await ctx.send(
+        f"💾 Saved Version: "
+        f"`{saved.get('version', 'unknown')}`\n"
+        f"🔢 Saved Version Code: "
+        f"`{saved.get('version_code', 'unknown')}`"
     )
 
 
@@ -733,6 +1120,10 @@ async def on_ready():
         f"Bot ID: {bot.user.id}"
     )
 
+    # --------------------------------------------------------
+    # Update checker
+    # --------------------------------------------------------
+
     if not update_checker.is_running():
 
         update_checker.start()
@@ -742,6 +1133,10 @@ async def on_ready():
             "(every 20 seconds)."
         )
 
+    # --------------------------------------------------------
+    # Render keep-alive
+    # --------------------------------------------------------
+
     if not render_keep_alive.is_running():
 
         render_keep_alive.start()
@@ -750,6 +1145,10 @@ async def on_ready():
             "Render keep-alive started "
             "(every 10 minutes)."
         )
+
+    # --------------------------------------------------------
+    # Helper message
+    # --------------------------------------------------------
 
     await send_helper_message()
 
@@ -764,7 +1163,8 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
 
         raise RuntimeError(
-            "DISCORD_TOKEN environment variable is missing."
+            "DISCORD_TOKEN environment variable "
+            "is missing."
         )
 
     Thread(
@@ -772,4 +1172,6 @@ if __name__ == "__main__":
         daemon=True
     ).start()
 
-    bot.run(DISCORD_TOKEN)
+    bot.run(
+        DISCORD_TOKEN
+    )
