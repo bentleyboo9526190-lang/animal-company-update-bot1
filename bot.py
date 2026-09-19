@@ -36,40 +36,50 @@ RENDER_URL = "https://animal-company-update-bot1.onrender.com/"
 # Animal Company app
 ANIMAL_COMPANY_APP_ID = "7190422614401072"
 
-# Quest Store DB
+# ============================================================
+# VERSION SOURCES
+# ============================================================
+
+# Primary source
+VRDB_URL = (
+    "https://vrdb.app/game/"
+    "animal-company/7190422614401072"
+)
+
+# Backup source
 QUEST_STORE_DB_URL = (
     "https://queststoredb.com/game/"
     "animal-company-7190422614401072/"
 )
 
-# Meta Store
+# Meta Store - used only as the clickable Discord link
 META_STORE_URL = (
     "https://www.meta.com/experiences/"
     "animal-company/7190422614401072/"
 )
 
-# Saved state
+# ============================================================
+# STATE
+# ============================================================
+
 STATE_FILE = "update_data.json"
 
 # ============================================================
-# IMPORTANT VERSION SAFETY
-# ============================================================
-#
-# This is the newest version we already know is legitimate.
-#
-# The bot will NEVER move backwards below this version.
-#
-# This prevents bad/stale source data such as:
-#
-# 1.57.1.2243
-#
-# from replacing:
-#
-# 1.91.0.3549
-#
+# VERSION SAFETY
 # ============================================================
 
+# Newest version we already know is legitimate.
+#
+# The bot will NEVER move backwards below this version.
+
 KNOWN_GOOD_VERSION = "1.91.0.3549"
+
+# A new version must be seen this many consecutive times
+# before the bot announces it.
+#
+# This prevents one bad web request from causing a fake update.
+
+REQUIRED_CONFIRMATIONS = 2
 
 # ============================================================
 # LOGGING
@@ -116,27 +126,27 @@ bot = commands.Bot(
 )
 
 # ============================================================
-# VERSION COMPARISON
+# VERSION FUNCTIONS
 # ============================================================
 
 
 def version_tuple(version):
     """
-    Turns:
+    Converts:
 
-        1.91.0.3549
+        1.91.1.3570
 
     into:
 
-        (1, 91, 0, 3549)
-
-    This lets us correctly determine which version
-    is newer.
+        (1, 91, 1, 3570)
     """
 
     try:
 
-        parts = version.split(".")
+        parts = version.strip().split(".")
+
+        if len(parts) != 4:
+            return (0, 0, 0, 0)
 
         return tuple(
             int(part)
@@ -148,16 +158,45 @@ def version_tuple(version):
         return (0, 0, 0, 0)
 
 
-def is_newer_version(new_version, old_version):
+def is_valid_version(version):
     """
-    Returns True ONLY when new_version is actually
-    newer than old_version.
+    Makes sure the version is exactly in:
+
+        X.X.X.X
+
+    format.
     """
+
+    if not isinstance(version, str):
+        return False
+
+    return bool(
+        re.fullmatch(
+            r"\d+\.\d+\.\d+\.\d+",
+            version.strip()
+        )
+    )
+
+
+def is_newer_version(
+    new_version,
+    old_version
+):
 
     return (
         version_tuple(new_version)
         > version_tuple(old_version)
     )
+
+
+def get_version_code(version):
+
+    try:
+        return version.split(".")[-1]
+
+    except Exception:
+
+        return ""
 
 
 # ============================================================
@@ -191,7 +230,9 @@ def load_state():
 
 def save_state(
     version,
-    version_code
+    version_code,
+    pending_version=None,
+    pending_count=0
 ):
 
     data = {
@@ -199,7 +240,10 @@ def save_state(
         "version_code": str(version_code),
         "saved_at": datetime.now(
             timezone.utc
-        ).isoformat()
+        ).isoformat(),
+
+        "pending_version": pending_version,
+        "pending_count": pending_count
     }
 
     with open(
@@ -286,7 +330,6 @@ async def send_helper_message():
 
             return
 
-    # Check recent messages so we don't spam
     try:
 
         async for message in channel.history(
@@ -331,23 +374,26 @@ async def send_helper_message():
 
 
 # ============================================================
-# QUEST STORE DB
+# HTTP SESSION
 # ============================================================
 
 
-async def get_queststoredb_version():
+async def fetch_page(url):
 
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 "
             "(KHTML, like Gecko) "
-            "Chrome/151.0.0.0 Safari/537.36"
+            "Chrome/153.0.0.0 Safari/537.36"
         ),
+
         "Accept": (
             "text/html,"
-            "application/xhtml+xml"
-        ),
+            "application/xhtml+xml,"
+            "application/xml;q=0.9,"
+            "*/*;q=0.8"
+        )
     }
 
     try:
@@ -361,136 +407,274 @@ async def get_queststoredb_version():
         ) as session:
 
             async with session.get(
-                QUEST_STORE_DB_URL,
+                url,
                 timeout=timeout
             ) as response:
 
                 text = await response.text()
 
                 log.info(
-                    f"Quest Store DB request: "
-                    f"HTTP {response.status}"
+                    f"Version source request: "
+                    f"{url} -> HTTP {response.status}"
                 )
 
                 if response.status != 200:
 
-                    log.warning(
-                        f"Quest Store DB returned "
-                        f"HTTP {response.status}"
-                    )
-
                     return None
 
-                # ------------------------------------------------
-                # Look for app version.
-                # ------------------------------------------------
-
-                patterns = [
-
-                    r"app version\s*</[^>]+>\s*"
-                    r"(?:<[^>]+>\s*)?"
-                    r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
-
-                    r"app version\s*\|\s*"
-                    r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
-
-                    r"app.version[^0-9]*"
-                    r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
-                ]
-
-                version = None
-
-                for pattern in patterns:
-
-                    match = re.search(
-                        pattern,
-                        text,
-                        re.IGNORECASE | re.DOTALL
-                    )
-
-                    if match:
-
-                        version = match.group(1)
-
-                        break
-
-                # ------------------------------------------------
-                # General fallback.
-                # ------------------------------------------------
-
-                if not version:
-
-                    versions = re.findall(
-                        r"\b\d+\.\d+\.\d+\.\d+\b",
-                        text
-                    )
-
-                    if versions:
-
-                        position = text.lower().find(
-                            "app version"
-                        )
-
-                        if position >= 0:
-
-                            nearby = text[
-                                max(
-                                    0,
-                                    position - 100
-                                ):
-                                position + 500
-                            ]
-
-                            nearby_versions = re.findall(
-                                r"\b\d+\.\d+\.\d+\.\d+\b",
-                                nearby
-                            )
-
-                            if nearby_versions:
-
-                                version = (
-                                    nearby_versions[0]
-                                )
-
-                        if not version:
-
-                            version = versions[0]
-
-                if not version:
-
-                    log.warning(
-                        "Quest Store DB page did not "
-                        "contain a recognizable app version."
-                    )
-
-                    return None
-
-                version_code = (
-                    version.split(".")[-1]
-                )
-
-                log.info(
-                    f"Quest Store DB version: "
-                    f"{version}"
-                )
-
-                log.info(
-                    f"Quest Store DB version code: "
-                    f"{version_code}"
-                )
-
-                return {
-                    "version": version,
-                    "version_code": version_code,
-                }
+                return text
 
     except Exception as e:
 
         log.warning(
-            f"Quest Store DB request failed: {e}"
+            f"Could not fetch {url}: {e}"
         )
 
         return None
+
+
+# ============================================================
+# VRDB VERSION
+# ============================================================
+
+
+async def get_vrdb_version():
+
+    text = await fetch_page(
+        VRDB_URL
+    )
+
+    if not text:
+        return None
+
+    # VRDB normally displays:
+    #
+    # Version: 1.91.1.3570
+
+    patterns = [
+
+        r"Version:\s*"
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
+
+        r'"version"\s*:\s*"'
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
+
+        r"\bVersion\b[^0-9]+"
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE | re.DOTALL
+        )
+
+        if match:
+
+            version = match.group(1)
+
+            if is_valid_version(version):
+
+                log.info(
+                    f"VRDB version: {version}"
+                )
+
+                return {
+                    "version": version,
+                    "version_code": get_version_code(
+                        version
+                    )
+                }
+
+    log.warning(
+        "VRDB did not contain a recognizable version."
+    )
+
+    return None
+
+
+# ============================================================
+# QUEST STORE DB VERSION
+# ============================================================
+
+
+async def get_queststoredb_version():
+
+    text = await fetch_page(
+        QUEST_STORE_DB_URL
+    )
+
+    if not text:
+        return None
+
+    patterns = [
+
+        r"app version\s*</[^>]+>\s*"
+        r"(?:<[^>]+>\s*)?"
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
+
+        r"app version\s*\|\s*"
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)",
+
+        r"app.version[^0-9]*"
+        r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE | re.DOTALL
+        )
+
+        if match:
+
+            version = match.group(1)
+
+            if is_valid_version(version):
+
+                log.info(
+                    f"Quest Store DB version: {version}"
+                )
+
+                return {
+                    "version": version,
+                    "version_code": get_version_code(
+                        version
+                    )
+                }
+
+    log.warning(
+        "Quest Store DB did not contain "
+        "a recognizable version."
+    )
+
+    return None
+
+
+# ============================================================
+# GET BEST VERSION
+# ============================================================
+
+
+async def get_best_version():
+
+    vrdb = await get_vrdb_version()
+
+    queststore = await get_queststoredb_version()
+
+    candidates = []
+
+    if vrdb:
+
+        candidates.append(
+            (
+                vrdb["version"],
+                "VRDB"
+            )
+        )
+
+    if queststore:
+
+        candidates.append(
+            (
+                queststore["version"],
+                "Quest Store DB"
+            )
+        )
+
+    if not candidates:
+
+        log.warning(
+            "No version source returned a valid version."
+        )
+
+        return None
+
+    # --------------------------------------------------------
+    # Remove versions below the known-good version.
+    # --------------------------------------------------------
+
+    valid_candidates = []
+
+    for version, source in candidates:
+
+        if is_newer_version(
+            version,
+            KNOWN_GOOD_VERSION
+        ) or version == KNOWN_GOOD_VERSION:
+
+            valid_candidates.append(
+                (
+                    version,
+                    source
+                )
+            )
+
+        else:
+
+            log.warning(
+                f"Ignoring stale source result: "
+                f"{version} from {source}"
+            )
+
+    # --------------------------------------------------------
+    # If everything is stale, use the known-good version.
+    # --------------------------------------------------------
+
+    if not valid_candidates:
+
+        log.warning(
+            "All external version sources are "
+            "older than the known-good version."
+        )
+
+        return {
+            "version": KNOWN_GOOD_VERSION,
+            "version_code": get_version_code(
+                KNOWN_GOOD_VERSION
+            ),
+            "source": "KNOWN_GOOD"
+        }
+
+    # --------------------------------------------------------
+    # Pick the newest valid version.
+    # --------------------------------------------------------
+
+    valid_candidates.sort(
+        key=lambda item: version_tuple(
+            item[0]
+        ),
+        reverse=True
+    )
+
+    best_version = valid_candidates[0][0]
+    best_source = valid_candidates[0][1]
+
+    log.info(
+        f"Best detected version: "
+        f"{best_version} "
+        f"(source: {best_source})"
+    )
+
+    # Show all source results for debugging.
+    for version, source in candidates:
+
+        log.info(
+            f"Source result: "
+            f"{source} = {version}"
+        )
+
+    return {
+        "version": best_version,
+        "version_code": get_version_code(
+            best_version
+        ),
+        "source": best_source
+    }
 
 
 # ============================================================
@@ -560,7 +744,7 @@ async def get_metametadata():
 async def get_current_app_info():
 
     version_info = (
-        await get_queststoredb_version()
+        await get_best_version()
     )
 
     if not version_info:
@@ -574,7 +758,8 @@ async def get_current_app_info():
     return {
         "version": version_info["version"],
         "version_code": version_info["version_code"],
-        "metadata": metadata,
+        "source": version_info["source"],
+        "metadata": metadata
     }
 
 
@@ -798,16 +983,19 @@ async def update_checker():
         info["version_code"]
     )
 
+    source = info["source"]
+
     metadata = info["metadata"]
 
     log.info(
         f"Detected version: "
         f"{detected_version} "
-        f"({detected_version_code})"
+        f"({detected_version_code}) "
+        f"from {source}"
     )
 
     # ========================================================
-    # LOAD SAVED VERSION
+    # LOAD STATE
     # ========================================================
 
     saved = load_state()
@@ -818,35 +1006,30 @@ async def update_checker():
 
     if not saved:
 
-        # If the source is somehow older than our known-good
-        # version, save the known-good version instead.
         if not is_newer_version(
             detected_version,
             KNOWN_GOOD_VERSION
         ):
 
             log.info(
-                f"First run detected stale/older source "
-                f"version {detected_version}."
-            )
-
-            log.info(
-                f"Using known-good version "
-                f"{KNOWN_GOOD_VERSION} "
-                f"instead."
+                f"First run detected "
+                f"{detected_version}, which is not "
+                f"newer than known-good "
+                f"{KNOWN_GOOD_VERSION}."
             )
 
             save_state(
                 KNOWN_GOOD_VERSION,
-                KNOWN_GOOD_VERSION.split(".")[-1]
+                get_version_code(
+                    KNOWN_GOOD_VERSION
+                )
             )
 
             return
 
         log.info(
-            f"No previous saved version. "
+            f"No saved state. "
             f"Saving {detected_version} "
-            f"({detected_version_code}) "
             f"without notification."
         )
 
@@ -858,7 +1041,7 @@ async def update_checker():
         return
 
     # ========================================================
-    # GET SAVED VERSION
+    # SAVED VERSION
     # ========================================================
 
     saved_version = str(
@@ -875,6 +1058,17 @@ async def update_checker():
         )
     )
 
+    pending_version = saved.get(
+        "pending_version"
+    )
+
+    pending_count = int(
+        saved.get(
+            "pending_count",
+            0
+        )
+    )
+
     log.info(
         f"Saved version: "
         f"{saved_version} "
@@ -882,12 +1076,7 @@ async def update_checker():
     )
 
     # ========================================================
-    # REPAIR OLD/BROKEN STATE
-    # ========================================================
-    #
-    # If the previous bug saved 1.57.1.2243, repair it
-    # without sending another notification.
-    #
+    # REPAIR OLD STATE
     # ========================================================
 
     if is_newer_version(
@@ -897,62 +1086,57 @@ async def update_checker():
 
         log.warning(
             f"Saved version {saved_version} "
-            f"is below known-good version "
+            f"is below known-good "
             f"{KNOWN_GOOD_VERSION}."
         )
 
         log.info(
-            f"Repairing saved state to "
-            f"{KNOWN_GOOD_VERSION} "
-            f"without notification."
+            f"Repairing state to "
+            f"{KNOWN_GOOD_VERSION}."
         )
 
         save_state(
             KNOWN_GOOD_VERSION,
-            KNOWN_GOOD_VERSION.split(".")[-1]
+            get_version_code(
+                KNOWN_GOOD_VERSION
+            )
         )
 
-        saved_version = (
+        saved_version = KNOWN_GOOD_VERSION
+        saved_version_code = get_version_code(
             KNOWN_GOOD_VERSION
         )
 
-        saved_version_code = (
-            KNOWN_GOOD_VERSION.split(".")[-1]
-        )
+        pending_version = None
+        pending_count = 0
 
     # ========================================================
     # SAME VERSION
     # ========================================================
 
-    if (
-        detected_version
-        == saved_version
-    ):
+    if detected_version == saved_version:
+
+        if pending_version:
+
+            log.info(
+                f"Pending version {pending_version} "
+                f"disappeared, clearing confirmation."
+            )
+
+            save_state(
+                saved_version,
+                saved_version_code
+            )
 
         log.info(
             f"No update. Current version: "
-            f"{saved_version} "
-            f"({saved_version_code})"
+            f"{saved_version}"
         )
 
         return
 
     # ========================================================
-    # SOURCE IS OLDER
-    # ========================================================
-    #
-    # THIS IS THE IMPORTANT FIX.
-    #
-    # If Quest Store DB temporarily reports:
-    #
-    # 1.57.1.2243
-    #
-    # while our saved version is:
-    #
-    # 1.91.0.3549
-    #
-    # we DO NOT send anything.
-    #
+    # DETECTED VERSION IS OLDER
     # ========================================================
 
     if not is_newer_version(
@@ -966,19 +1150,85 @@ async def update_checker():
             f"(saved: {saved_version})"
         )
 
+        if pending_version:
+
+            save_state(
+                saved_version,
+                saved_version_code
+            )
+
         return
 
     # ========================================================
-    # NEWER VERSION FOUND
+    # NEWER VERSION DETECTED
     # ========================================================
 
     log.info(
-        f"NEWER VERSION FOUND: "
-        f"{saved_version} "
-        f"({saved_version_code}) "
-        f"-> "
-        f"{detected_version} "
-        f"({detected_version_code})"
+        f"Potential new version found: "
+        f"{saved_version} -> {detected_version}"
+    )
+
+    # ========================================================
+    # CONFIRMATION SYSTEM
+    # ========================================================
+    #
+    # The same new version must be detected twice.
+    #
+    # Example:
+    #
+    # Check 1:
+    # 1.91.1.3570
+    #
+    # Check 2:
+    # 1.91.1.3570
+    #
+    # THEN notify.
+    #
+    # This prevents one bad web response from causing
+    # an announcement.
+    # ========================================================
+
+    if pending_version == detected_version:
+
+        pending_count += 1
+
+    else:
+
+        pending_version = detected_version
+        pending_count = 1
+
+    log.info(
+        f"Confirmation for {detected_version}: "
+        f"{pending_count}/{REQUIRED_CONFIRMATIONS}"
+    )
+
+    # ========================================================
+    # NOT CONFIRMED YET
+    # ========================================================
+
+    if pending_count < REQUIRED_CONFIRMATIONS:
+
+        save_state(
+            saved_version,
+            saved_version_code,
+            pending_version,
+            pending_count
+        )
+
+        log.info(
+            f"Waiting for confirmation of "
+            f"{detected_version}."
+        )
+
+        return
+
+    # ========================================================
+    # CONFIRMED NEW VERSION
+    # ========================================================
+
+    log.info(
+        f"CONFIRMED NEW VERSION: "
+        f"{saved_version} -> {detected_version}"
     )
 
     # --------------------------------------------------------
@@ -1015,7 +1265,7 @@ async def before_update_checker():
 
 
 # ============================================================
-# TEST COMMAND
+# TEST UPDATE COMMAND
 # ============================================================
 
 
@@ -1053,7 +1303,7 @@ async def testupdate(ctx):
 async def checkversion(ctx):
 
     await ctx.send(
-        "🔎 Checking Quest Store DB..."
+        "🔎 Checking Animal Company version..."
     )
 
     info = (
@@ -1063,15 +1313,15 @@ async def checkversion(ctx):
     if not info:
 
         await ctx.send(
-            "❌ Quest Store DB did not return "
-            "a version."
+            "❌ Could not get a version."
         )
 
         return
 
     await ctx.send(
         f"📦 Version: `{info['version']}`\n"
-        f"🔢 Version Code: `{info['version_code']}`"
+        f"🔢 Version Code: `{info['version_code']}`\n"
+        f"📡 Source: `{info['source']}`"
     )
 
 
@@ -1096,11 +1346,28 @@ async def checkstate(ctx):
 
         return
 
-    await ctx.send(
+    pending_version = saved.get(
+        "pending_version"
+    )
+
+    pending_count = saved.get(
+        "pending_count",
+        0
+    )
+
+    message = (
         f"💾 Saved Version: "
         f"`{saved.get('version', 'unknown')}`\n"
         f"🔢 Saved Version Code: "
-        f"`{saved.get('version_code', 'unknown')}`"
+        f"`{saved.get('version_code', 'unknown')}`\n"
+        f"⏳ Pending Version: "
+        f"`{pending_version or 'None'}`\n"
+        f"🔁 Confirmation Count: "
+        f"`{pending_count}/{REQUIRED_CONFIRMATIONS}`"
+    )
+
+    await ctx.send(
+        message
     )
 
 
