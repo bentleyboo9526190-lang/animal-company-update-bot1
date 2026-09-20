@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import html
 import requests
 import discord
 from discord.ext import commands, tasks
@@ -20,17 +21,15 @@ UPDATE_ROLE_ID = int(
     os.getenv("UPDATE_ROLE_ID", "0")
 )
 
-# Current known Animal Company version
 KNOWN_GOOD_VERSION = "1.91.1.3570"
 
-# Number of times a new version must be detected
 REQUIRED_CONFIRMATIONS = 2
 
 STATE_FILE = "update_data.json"
 
 
 # =========================================================
-# VERSION SOURCES
+# URLS
 # =========================================================
 
 META_STORE_URL = (
@@ -50,7 +49,7 @@ QUEST_STORE_DB_URL = (
 
 
 # =========================================================
-# DISCORD SETUP
+# DISCORD
 # =========================================================
 
 intents = discord.Intents.default()
@@ -63,17 +62,19 @@ bot = commands.Bot(
 
 
 # =========================================================
-# VERSION FUNCTIONS
+# VERSION HELPERS
 # =========================================================
 
 def version_tuple(version):
+
     return tuple(
-        int(number)
-        for number in version.split(".")
+        int(x)
+        for x in version.split(".")
     )
 
 
 def valid_version(version):
+
     return bool(
         re.fullmatch(
             r"\d+\.\d+\.\d+\.\d+",
@@ -83,6 +84,7 @@ def valid_version(version):
 
 
 def extract_versions(text):
+
     matches = re.findall(
         r"\b\d+\.\d+\.\d+\.\d+\b",
         text
@@ -91,8 +93,11 @@ def extract_versions(text):
     versions = []
 
     for version in matches:
+
         if valid_version(version):
+
             if version not in versions:
+
                 versions.append(version)
 
     return versions
@@ -105,6 +110,7 @@ def extract_versions(text):
 def load_state():
 
     if not os.path.exists(STATE_FILE):
+
         return {}
 
     try:
@@ -118,6 +124,7 @@ def load_state():
             data = json.load(file)
 
         if isinstance(data, dict):
+
             return data
 
         return {}
@@ -155,6 +162,93 @@ def save_state(state):
 
 
 # =========================================================
+# META ARTWORK
+# =========================================================
+
+def get_meta_artwork():
+
+    try:
+
+        response = requests.get(
+            META_STORE_URL,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/140.0.0.0 "
+                    "Safari/537.36"
+                )
+            },
+            timeout=15
+        )
+
+        print(
+            "[META] Artwork request: "
+            f"HTTP {response.status_code}"
+        )
+
+        if response.status_code != 200:
+
+            return None
+
+        page = html.unescape(
+            response.text
+        )
+
+        # Meta's Animal Company page contains
+        # artwork/screenshot URLs hosted on
+        # scontent*.oculuscdn.com.
+        matches = re.findall(
+            r'https://scontent[^"\'<>\s]+',
+            page
+        )
+
+        artwork_urls = []
+
+        for url in matches:
+
+            url = (
+                url
+                .replace("\\u0026", "&")
+                .replace("\\/", "/")
+            )
+
+            if (
+                "oculuscdn.com" in url
+                and url not in artwork_urls
+            ):
+
+                artwork_urls.append(url)
+
+        if not artwork_urls:
+
+            print(
+                "[META] No artwork URL found."
+            )
+
+            return None
+
+        # Use the first Animal Company image
+        artwork = artwork_urls[0]
+
+        print(
+            "[META] Artwork found."
+        )
+
+        return artwork
+
+    except Exception as error:
+
+        print(
+            f"[META] Artwork error: {error}"
+        )
+
+        return None
+
+
+# =========================================================
 # META VERSION
 # =========================================================
 
@@ -178,13 +272,15 @@ def get_meta_version():
         )
 
         print(
-            f"[META] HTTP {response.status_code}"
+            f"[META] Version request: "
+            f"HTTP {response.status_code}"
         )
 
         if response.status_code != 200:
+
             return None
 
-        html = response.text
+        page = response.text
 
         patterns = [
 
@@ -208,7 +304,7 @@ def get_meta_version():
 
             match = re.search(
                 pattern,
-                html,
+                page,
                 re.IGNORECASE
             )
 
@@ -219,14 +315,15 @@ def get_meta_version():
                 if valid_version(version):
 
                     print(
-                        f"[META] Version found: "
+                        f"[META] Version: "
                         f"{version}"
                     )
 
                     return version
 
         print(
-            "[META] No readable version found."
+            "[META] Version not available "
+            "in page source."
         )
 
         return None
@@ -234,14 +331,14 @@ def get_meta_version():
     except Exception as error:
 
         print(
-            f"[META] Error: {error}"
+            f"[META] Version error: {error}"
         )
 
         return None
 
 
 # =========================================================
-# VRDB VERSION
+# VRDB
 # =========================================================
 
 def get_vrdb_version():
@@ -257,10 +354,12 @@ def get_vrdb_version():
         )
 
         print(
-            f"[VRDB] HTTP {response.status_code}"
+            f"[VRDB] HTTP "
+            f"{response.status_code}"
         )
 
         if response.status_code != 200:
+
             return None
 
         versions = extract_versions(
@@ -268,10 +367,6 @@ def get_vrdb_version():
         )
 
         if not versions:
-
-            print(
-                "[VRDB] No version found."
-            )
 
             return None
 
@@ -281,8 +376,7 @@ def get_vrdb_version():
         )
 
         print(
-            f"[VRDB] Version found: "
-            f"{newest}"
+            f"[VRDB] Version: {newest}"
         )
 
         return newest
@@ -297,7 +391,7 @@ def get_vrdb_version():
 
 
 # =========================================================
-# QUEST STORE DB VERSION
+# QUEST STORE DB
 # =========================================================
 
 def get_queststoredb_version():
@@ -318,6 +412,7 @@ def get_queststoredb_version():
         )
 
         if response.status_code != 200:
+
             return None
 
         versions = extract_versions(
@@ -325,11 +420,6 @@ def get_queststoredb_version():
         )
 
         if not versions:
-
-            print(
-                "[QUEST STORE DB] "
-                "No version found."
-            )
 
             return None
 
@@ -339,7 +429,7 @@ def get_queststoredb_version():
         )
 
         print(
-            "[QUEST STORE DB] Version found: "
+            "[QUEST STORE DB] Version: "
             f"{newest}"
         )
 
@@ -348,7 +438,7 @@ def get_queststoredb_version():
     except Exception as error:
 
         print(
-            "[QUEST STORE DB] Error: "
+            f"[QUEST STORE DB] Error: "
             f"{error}"
         )
 
@@ -356,7 +446,7 @@ def get_queststoredb_version():
 
 
 # =========================================================
-# GET BEST VERSION
+# BEST VERSION
 # =========================================================
 
 def get_best_version():
@@ -368,14 +458,19 @@ def get_best_version():
     quest = get_queststoredb_version()
 
     print("")
-    print("========== VERSION RESULTS ==========")
-    print(f"Meta:        {meta}")
-    print(f"VRDB:        {vrdb}")
-    print(f"Quest DB:    {quest}")
-    print("=====================================")
+    print(
+        "========== VERSION RESULTS =========="
+    )
+    print(f"Meta:     {meta}")
+    print(f"VRDB:     {vrdb}")
+    print(f"Quest DB: {quest}")
+    print(
+        "====================================="
+    )
     print("")
 
-    # Meta is preferred
+    # Meta first if it gives us a usable
+    # version at or above the known version.
     if meta:
 
         try:
@@ -383,7 +478,9 @@ def get_best_version():
             if (
                 version_tuple(meta)
                 >=
-                version_tuple(KNOWN_GOOD_VERSION)
+                version_tuple(
+                    KNOWN_GOOD_VERSION
+                )
             ):
 
                 return (
@@ -392,9 +489,9 @@ def get_best_version():
                 )
 
         except Exception:
+
             pass
 
-    # Fallback sources
     candidates = []
 
     if vrdb:
@@ -404,14 +501,20 @@ def get_best_version():
             if (
                 version_tuple(vrdb)
                 >=
-                version_tuple(KNOWN_GOOD_VERSION)
+                version_tuple(
+                    KNOWN_GOOD_VERSION
+                )
             ):
 
                 candidates.append(
-                    (vrdb, "VRDB")
+                    (
+                        vrdb,
+                        "VRDB"
+                    )
                 )
 
         except Exception:
+
             pass
 
     if quest:
@@ -421,7 +524,9 @@ def get_best_version():
             if (
                 version_tuple(quest)
                 >=
-                version_tuple(KNOWN_GOOD_VERSION)
+                version_tuple(
+                    KNOWN_GOOD_VERSION
+                )
             ):
 
                 candidates.append(
@@ -432,6 +537,7 @@ def get_best_version():
                 )
 
         except Exception:
+
             pass
 
     if candidates:
@@ -454,6 +560,69 @@ def get_best_version():
 
 
 # =========================================================
+# CREATE VERSION EMBED
+# =========================================================
+
+def make_version_embed(
+    version,
+    source,
+    artwork=None
+):
+
+    version_code = (
+        version.split(".")[-1]
+    )
+
+    embed = discord.Embed(
+        title="🦍 Animal Company",
+        description=(
+            "🔎 **Checking Animal Company "
+            "version...**"
+        ),
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="📦 Version",
+        value=f"`{version}`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔢 Version Code",
+        value=f"`{version_code}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="📡 Source",
+        value=f"`{source}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🔗 Meta Store",
+        value=(
+            f"[Open Animal Company page]"
+            f"({META_STORE_URL})"
+        ),
+        inline=False
+    )
+
+    if artwork:
+
+        embed.set_image(
+            url=artwork
+        )
+
+    embed.set_footer(
+        text="Animal Company Update Watcher"
+    )
+
+    return embed
+
+
+# =========================================================
 # SEND UPDATE
 # =========================================================
 
@@ -461,7 +630,6 @@ async def send_update(
     old_version,
     new_version,
     source,
-    release_time=None,
     test=False
 ):
 
@@ -477,6 +645,8 @@ async def send_update(
         )
 
         return False
+
+    artwork = get_meta_artwork()
 
     version_code = (
         new_version.split(".")[-1]
@@ -520,14 +690,6 @@ async def send_update(
         inline=True
     )
 
-    if release_time:
-
-        embed.add_field(
-            name="🕘 Released",
-            value=release_time,
-            inline=False
-        )
-
     embed.add_field(
         name="📡 Channel",
         value="`LIVE`",
@@ -543,6 +705,12 @@ async def send_update(
         inline=True
     )
 
+    if artwork:
+
+        embed.set_image(
+            url=artwork
+        )
+
     embed.set_footer(
         text=f"Detected from {source}"
     )
@@ -557,7 +725,7 @@ async def send_update(
     )
 
     print(
-        f"[DISCORD] Announcement sent: "
+        f"[DISCORD] Update sent: "
         f"{new_version}"
     )
 
@@ -565,7 +733,7 @@ async def send_update(
 
 
 # =========================================================
-# AUTOMATIC UPDATE CHECKER
+# UPDATE CHECKER
 # =========================================================
 
 @tasks.loop(seconds=20)
@@ -578,10 +746,6 @@ async def update_checker():
         )
 
         if not version:
-
-            print(
-                "[CHECKER] No version detected."
-            )
 
             return
 
@@ -602,7 +766,7 @@ async def update_checker():
             )
         )
 
-        # First run
+        # FIRST RUN
         if not saved_version:
 
             state = {
@@ -614,24 +778,16 @@ async def update_checker():
             save_state(state)
 
             print(
-                "[CHECKER] First run."
-            )
-
-            print(
-                f"[CHECKER] Saved: {version}"
+                "[CHECKER] Saved version: "
+                f"{version}"
             )
 
             return
 
-        # Same version
+        # NO UPDATE
         if version == saved_version:
 
             if pending_version:
-
-                print(
-                    "[CHECKER] Pending update "
-                    "disappeared."
-                )
 
                 state[
                     "pending_version"
@@ -645,12 +801,13 @@ async def update_checker():
 
             print(
                 "[CHECKER] No update. "
-                f"Current: {saved_version}"
+                f"Current version: "
+                f"{saved_version}"
             )
 
             return
 
-        # Older version
+        # IGNORE OLDER VERSION
         if (
             version_tuple(version)
             <
@@ -664,7 +821,7 @@ async def update_checker():
 
             return
 
-        # New version
+        # NEW VERSION
         if pending_version == version:
 
             confirmations += 1
@@ -695,7 +852,7 @@ async def update_checker():
             f"{REQUIRED_CONFIRMATIONS}"
         )
 
-        # Confirmed update
+        # CONFIRMED
         if (
             confirmations
             >=
@@ -731,7 +888,7 @@ async def update_checker():
 
 
 # =========================================================
-# CHECK VERSION COMMAND
+# !CHECKVERSION
 # =========================================================
 
 @bot.command()
@@ -739,17 +896,38 @@ async def checkversion(ctx):
 
     try:
 
+        await ctx.send(
+            "🔎 Checking Animal Company "
+            "version..."
+        )
+
         version, source = (
             get_best_version()
         )
 
+        artwork = get_meta_artwork()
+
+        embed = make_version_embed(
+            version,
+            source,
+            artwork
+        )
+
         await ctx.send(
-            "🔎 **Animal Company Version**\n"
-            f"📦 Version: `{version}`\n"
-            f"📡 Source: `{source}`"
+            embed=embed
+        )
+
+        print(
+            f"[COMMAND] checkversion: "
+            f"{version} ({source})"
         )
 
     except Exception as error:
+
+        print(
+            f"[COMMAND] checkversion error: "
+            f"{error}"
+        )
 
         await ctx.send(
             "❌ Version check failed:\n"
@@ -758,7 +936,7 @@ async def checkversion(ctx):
 
 
 # =========================================================
-# CHECK STATE COMMAND
+# !CHECKSTATE
 # =========================================================
 
 @bot.command()
@@ -792,7 +970,7 @@ async def checkstate(ctx):
 
 
 # =========================================================
-# TEST UPDATE COMMAND
+# !TESTUPDATE
 # =========================================================
 
 @bot.command()
@@ -811,7 +989,7 @@ async def testupdate(ctx):
     if sent:
 
         await ctx.send(
-            "✅ Test announcement sent."
+            "✅ Test update announcement sent."
         )
 
     else:
@@ -822,7 +1000,7 @@ async def testupdate(ctx):
 
 
 # =========================================================
-# COMMAND ERROR HANDLER
+# COMMAND ERRORS
 # =========================================================
 
 @bot.event
@@ -863,9 +1041,15 @@ async def on_command_error(
 async def on_ready():
 
     print("")
-    print("================================")
-    print(" Animal Company Update Bot")
-    print("================================")
+    print(
+        "================================"
+    )
+    print(
+        " Animal Company Update Bot"
+    )
+    print(
+        "================================"
+    )
     print(
         f"Logged in as: {bot.user}"
     )
@@ -873,10 +1057,21 @@ async def on_ready():
         f"Known version: "
         f"{KNOWN_GOOD_VERSION}"
     )
-    print("Meta: PRIMARY")
-    print("VRDB: FALLBACK")
-    print("Quest Store DB: FALLBACK")
-    print("================================")
+    print(
+        "Artwork: META"
+    )
+    print(
+        "Version primary: META"
+    )
+    print(
+        "Version fallback: VRDB"
+    )
+    print(
+        "Version fallback: Quest Store DB"
+    )
+    print(
+        "================================"
+    )
     print("")
 
     if not update_checker.is_running():
@@ -889,7 +1084,7 @@ async def on_ready():
 
 
 # =========================================================
-# START BOT
+# START
 # =========================================================
 
 if not TOKEN:
