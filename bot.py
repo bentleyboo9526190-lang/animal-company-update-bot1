@@ -72,7 +72,7 @@ STATE_FILE = "update_data.json"
 #
 # The bot will NEVER move backwards below this version.
 
-KNOWN_GOOD_VERSION = "1.91.0.3549"
+KNOWN_GOOD_VERSION = "1.91.0.3570"
 
 # A new version must be seen this many consecutive times
 # before the bot announces it.
