@@ -34,9 +34,16 @@ STATE_FILE = "update_data.json"
 # URLS
 # =========================================================
 
-META_STORE_URL = (
-    "https://www.meta.com/en-gb/experiences/"
-    "animal-company/7190422614401072/"
+META_STORE_URL = "https://www.meta.com/experiences/7190422614401072/"
+
+STEAMDB_PATCHNOTES_URL = "https://steamdb.info/app/4551040/patchnotes/"
+STEAM_ANNOUNCEMENT_URL = (
+    "https://steamstore-a.akamaihd.net/news/externalpost/"
+    "steam_community_announcements/1848664643356749"
+)
+STEAM_NEWS_API_URL = (
+    "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+    "?appid=4551040&count=10&maxlength=0"
 )
 
 VRDB_URL = (
@@ -595,6 +602,154 @@ def get_best_version():
 
 
 # =========================================================
+# STEAM ANNOUNCEMENT MONITOR
+# =========================================================
+
+def get_latest_steam_announcement():
+    """Read the public Steam news feed; posts need no version number."""
+    status, body = fetch_page(STEAM_NEWS_API_URL)
+    print(f"[STEAM NEWS] HTTP {status}")
+    if status != 200:
+        return None
+
+    try:
+        payload = json.loads(body)
+        items = payload.get("appnews", {}).get("newsitems", [])
+        valid = [
+            item for item in items
+            if isinstance(item, dict) and item.get("gid")
+        ]
+        if not valid:
+            return None
+
+        item = max(valid, key=lambda entry: int(entry.get("date", 0) or 0))
+        post_id = str(item.get("gid", "")).strip()
+        if not post_id:
+            return None
+
+        title = html.unescape(str(item.get("title", "New Animal Company announcement")))
+        raw_contents = html.unescape(str(item.get("contents", "")))
+        summary = re.sub(r"\[/?[a-zA-Z*]+(?:=[^\]]*)?\]", " ", raw_contents)
+        summary = re.sub(r"<[^>]+>", " ", summary)
+        summary = re.sub(r"\s+", " ", summary).strip()
+        if len(summary) > 900:
+            summary = summary[:897] + "..."
+
+        version_match = re.search(
+            r"\b\d+\.\d+\.\d+\.\d+\b",
+            title + " " + summary
+        )
+        return {
+            "id": post_id,
+            "title": title[:250],
+            "summary": summary or "A new Animal Company announcement was published.",
+            "url": str(item.get("url") or STEAM_ANNOUNCEMENT_URL),
+            "version": version_match.group(0) if version_match else None,
+        }
+    except (ValueError, TypeError, AttributeError) as error:
+        print(f"[STEAM NEWS] Feed parse error: {error}")
+        return None
+
+
+async def check_steam_announcements():
+    """Confirm a new Steam post twice, then announce even without a version."""
+    item = get_latest_steam_announcement()
+    if not item:
+        return
+
+    state = load_state()
+    last_id = str(state.get("last_steam_news_id") or "")
+    pending_id = str(state.get("pending_steam_news_id") or "")
+    confirmations = int(state.get("steam_news_confirmations", 0) or 0)
+
+    # Seed on first run so old posts are not announced as fresh updates.
+    if not last_id:
+        state["last_steam_news_id"] = item["id"]
+        state["pending_steam_news_id"] = None
+        state["steam_news_confirmations"] = 0
+        save_state(state)
+        print(f"[STEAM NEWS] Baseline saved: {item['id']}")
+        return
+
+    if item["id"] == last_id:
+        if pending_id:
+            state["pending_steam_news_id"] = None
+            state["steam_news_confirmations"] = 0
+            save_state(state)
+        return
+
+    if item["id"] == pending_id:
+        confirmations += 1
+    else:
+        confirmations = 1
+
+    state["pending_steam_news_id"] = item["id"]
+    state["steam_news_confirmations"] = confirmations
+    save_state(state)
+    print(f"[STEAM NEWS] New post candidate {item['id']}: {confirmations}/{REQUIRED_CONFIRMATIONS}")
+
+    if confirmations < REQUIRED_CONFIRMATIONS:
+        return
+
+    channel = bot.get_channel(UPDATE_CHANNEL_ID)
+    if channel is None:
+        print("[STEAM NEWS] Update channel not found; will retry next poll.")
+        return
+
+    embed = discord.Embed(
+        title=("🦍 Animal Company — " + item["title"])[:256],
+        description=item["summary"][:4000],
+        color=discord.Color.orange(),
+        url=item["url"],
+    )
+    embed.add_field(
+        name="📡 Detected source",
+        value="Steam Community announcements",
+        inline=True,
+    )
+    if item["version"]:
+        embed.add_field(name="📦 Version", value=f"`{item['version']}`", inline=True)
+    else:
+        embed.add_field(
+            name="📦 Version",
+            value="Not listed — new announcement detected by post ID.",
+            inline=False,
+        )
+    embed.add_field(
+        name="🔗 Monitor pages",
+        value=(
+            f"[Meta Store]({META_STORE_URL}) • "
+            f"[SteamDB patch notes]({STEAMDB_PATCHNOTES_URL}) • "
+            f"[Steam announcement]({STEAM_ANNOUNCEMENT_URL})"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Animal Company Update Watcher")
+
+    content = f"<@&{UPDATE_ROLE_ID}>" if UPDATE_ROLE_ID else None
+    allowed_mentions = discord.AllowedMentions(
+        roles=bool(UPDATE_ROLE_ID),
+        users=False,
+        everyone=False,
+    )
+    try:
+        await channel.send(
+            content=content,
+            embed=embed,
+            allowed_mentions=allowed_mentions,
+        )
+    except (discord.Forbidden, discord.HTTPException) as error:
+        print(f"[STEAM NEWS] Discord send failed; will retry: {error}")
+        return
+
+    state["last_steam_news_id"] = item["id"]
+    state["pending_steam_news_id"] = None
+    state["steam_news_confirmations"] = 0
+    save_state(state)
+    print(f"[STEAM NEWS] Announcement posted: {item['title']}")
+
+
+# =========================================================
 # VERSION EMBED
 # =========================================================
 
@@ -769,6 +924,10 @@ async def send_update(
 async def update_checker():
 
     try:
+
+        # Independently monitor new Steam announcements. This works even when
+        # the announcement does not contain a version number.
+        await check_steam_announcements()
 
         version, source = (
             get_best_version()
@@ -1123,6 +1282,8 @@ async def on_ready():
         "Version: Meta -> VRDB -> "
         "Quest Store DB"
     )
+    print("Steam announcements: Valve public news feed")
+    print(f"SteamDB patch notes: {STEAMDB_PATCHNOTES_URL}")
     print(
         "================================"
     )
